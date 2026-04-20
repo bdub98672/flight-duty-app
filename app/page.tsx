@@ -24,6 +24,50 @@ type Signoff = {
   locked: boolean;
 };
 
+type ComputedRow = Row & {
+  monthKey: string;
+  month: string;
+  dutyHours: number | null;
+  restHours: number | null;
+  restDisplay: string;
+  dayCurrent: string;
+  nightCurrent: string;
+  dutyExceedance: string;
+  monthFlightHours: number;
+  quarterFlightHours: number;
+  consecutiveQuarterFlightHours: number;
+  yearFlightHours: number;
+  validationErrors: string[];
+};
+
+type AuditEvent = {
+  action?: string;
+  actor_name?: string;
+  created_at?: string;
+};
+
+type CloudDutyLogRow = {
+  pilot_name: string;
+  log_date: string;
+  duty_in: string | null;
+  duty_out: string | null;
+  flight_hours: number | null;
+  day_landings: number | null;
+  night_landings: number | null;
+  remarks: string | null;
+  exceedance_reason: string | null;
+  approved_by: string | null;
+  approval_time: string | null;
+};
+
+type CloudSignoffRow = {
+  pilot_name: string;
+  month_key: string;
+  signed_name: string;
+  signed_at: string;
+  locked: boolean;
+};
+
 const PILOTS = ["Reyna", "Clark", "Millea", "Walsh"];
 const MONTHS = ["All", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const CERT_TEXT =
@@ -95,7 +139,7 @@ function fmtHours(hours: unknown) {
   return Number(hours).toFixed(2).replace(/\.00$/, "");
 }
 
-function mergeCloudRows(baseRows: Row[], cloudRows: any[]): Row[] {
+function mergeCloudRows(baseRows: Row[], cloudRows: CloudDutyLogRow[]): Row[] {
   const map = new Map(cloudRows.map((r) => [r.log_date, r]));
   return baseRows.map((row) => {
     const c = map.get(row.date);
@@ -115,7 +159,7 @@ function mergeCloudRows(baseRows: Row[], cloudRows: any[]): Row[] {
   });
 }
 
-function computeRows(rows: Row[]) {
+function computeRows(rows: Row[]): ComputedRow[] {
   return rows.map((row, index) => {
     const dutyInMin = parseTimeToMinutes(String(row.dutyIn));
     const dutyOutMin = parseTimeToMinutes(String(row.dutyOut));
@@ -125,7 +169,7 @@ function computeRows(rows: Row[]) {
       dutyHours =
         dutyOutMin >= dutyInMin
           ? (dutyOutMin - dutyInMin) / 60
-          : ((24 * 60 - dutyInMin) + dutyOutMin) / 60;
+          : (24 * 60 - dutyInMin + dutyOutMin) / 60;
     }
 
     const prev = rows[index - 1];
@@ -140,7 +184,7 @@ function computeRows(rows: Row[]) {
           const restMin =
             dutyInMin >= prevOutMin
               ? dutyInMin - prevOutMin
-              : ((24 * 60 - prevOutMin) + dutyInMin);
+              : 24 * 60 - prevOutMin + dutyInMin;
           restHours = restMin / 60;
           restDisplay = restHours >= 24 ? "24+" : fmtHours(restHours);
         }
@@ -176,7 +220,7 @@ function computeRows(rows: Row[]) {
       if (i > index) return sum;
       const d = new Date(r.date + "T00:00:00");
       const yearDiff = currentYear - d.getFullYear();
-      const quarterDiff = (currentQuarter - Math.floor(d.getMonth() / 3)) + yearDiff * 4;
+      const quarterDiff = currentQuarter - Math.floor(d.getMonth() / 3) + yearDiff * 4;
       return quarterDiff >= 0 && quarterDiff <= 1 ? sum + Number(r.flightHours || 0) : sum;
     }, 0);
 
@@ -223,7 +267,7 @@ export default function HomePage() {
     Object.fromEntries(PILOTS.map((p) => [p, buildYearRows()]))
   );
   const [signoffs, setSignoffs] = useState<Record<string, Record<string, Signoff>>>({});
-  const [auditLog, setAuditLog] = useState<any[]>([]);
+  const [auditLog, setAuditLog] = useState<AuditEvent[]>([]);
   const [signatureDraft, setSignatureDraft] = useState("");
   const [certifyChecked, setCertifyChecked] = useState(false);
   const [status, setStatus] = useState("Loading from Supabase...");
@@ -231,14 +275,14 @@ export default function HomePage() {
 
   const computed = useMemo(() => computeRows(data[selectedPilot] || []), [data, selectedPilot]);
   const visibleRows = useMemo(
-    () => (selectedMonth === "All" ? computed : computed.filter((r: any) => r.month === selectedMonth)),
+    () => (selectedMonth === "All" ? computed : computed.filter((r) => r.month === selectedMonth)),
     [computed, selectedMonth]
   );
 
-  const availableMonthKeys = useMemo(() => Array.from(new Set(computed.map((r: any) => r.monthKey))), [computed]);
+  const availableMonthKeys = useMemo(() => Array.from(new Set(computed.map((r) => r.monthKey))), [computed]);
   const activeMonthKey = useMemo(() => {
     if (selectedMonth === "All") return availableMonthKeys[availableMonthKeys.length - 1] || "2026-12";
-    const sample = computed.find((r: any) => r.month === selectedMonth);
+    const sample = computed.find((r) => r.month === selectedMonth);
     return sample ? sample.monthKey : availableMonthKeys[0];
   }, [selectedMonth, computed, availableMonthKeys]);
 
@@ -246,11 +290,11 @@ export default function HomePage() {
   const activeMonthLocked = Boolean(activeSignoff?.locked);
 
   const summary = useMemo(() => {
-    const totalFlight = visibleRows.reduce((s: number, r: any) => s + Number(r.flightHours || 0), 0);
-    const exceedances = visibleRows.filter((r: any) => r.dutyExceedance).length;
-    const notCurrent = visibleRows.filter((r: any) => r.dayCurrent === "NOT CURRENT" || r.nightCurrent === "NOT CURRENT").length;
-    const shortRest = visibleRows.filter((r: any) => typeof r.restHours === "number" && r.restHours < 10).length;
-    const validationIssues = visibleRows.reduce((sum: number, r: any) => sum + r.validationErrors.length, 0);
+    const totalFlight = visibleRows.reduce((s, r) => s + Number(r.flightHours || 0), 0);
+    const exceedances = visibleRows.filter((r) => r.dutyExceedance).length;
+    const notCurrent = visibleRows.filter((r) => r.dayCurrent === "NOT CURRENT" || r.nightCurrent === "NOT CURRENT").length;
+    const shortRest = visibleRows.filter((r) => typeof r.restHours === "number" && r.restHours < 10).length;
+    const validationIssues = visibleRows.reduce((sum, r) => sum + r.validationErrors.length, 0);
     return { totalFlight, exceedances, notCurrent, shortRest, validationIssues };
   }, [visibleRows]);
 
@@ -260,15 +304,18 @@ export default function HomePage() {
       const yearStart = "2026-01-01";
       const yearEnd = "2026-12-31";
       const [logsRes, signRes, auditRes] = await Promise.all([
-        supabase.from("duty_logs")
+        supabase
+          .from("duty_logs")
           .select("pilot_name, log_date, duty_in, duty_out, flight_hours, day_landings, night_landings, remarks, exceedance_reason, approved_by, approval_time")
           .gte("log_date", yearStart)
           .lte("log_date", yearEnd)
           .order("log_date"),
-        supabase.from("month_signoffs")
+        supabase
+          .from("month_signoffs")
           .select("pilot_name, month_key, signed_name, signed_at, locked")
           .like("month_key", "2026-%"),
-        supabase.from("audit_events")
+        supabase
+          .from("audit_events")
           .select("pilot_name, month_key, actor_name, action, details, created_at")
           .order("created_at", { ascending: false })
           .limit(50),
@@ -278,14 +325,18 @@ export default function HomePage() {
       if (signRes.error) throw signRes.error;
       if (auditRes.error) throw auditRes.error;
 
+      const dutyLogRows = (logsRes.data ?? []) as CloudDutyLogRow[];
+      const signoffRows = (signRes.data ?? []) as CloudSignoffRow[];
+      const auditRows = (auditRes.data ?? []) as AuditEvent[];
+
       const nextData: Record<string, Row[]> = Object.fromEntries(PILOTS.map((p) => [p, buildYearRows()]));
       for (const pilot of PILOTS) {
-        nextData[pilot] = mergeCloudRows(buildYearRows(), (logsRes.data || []).filter((r) => r.pilot_name === pilot));
+        nextData[pilot] = mergeCloudRows(buildYearRows(), dutyLogRows.filter((r) => r.pilot_name === pilot));
       }
       setData(nextData);
 
       const nextSignoffs: Record<string, Record<string, Signoff>> = {};
-      for (const s of signRes.data || []) {
+      for (const s of signoffRows) {
         nextSignoffs[s.pilot_name] ||= {};
         nextSignoffs[s.pilot_name][s.month_key] = {
           signature: s.signed_name,
@@ -295,10 +346,10 @@ export default function HomePage() {
         };
       }
       setSignoffs(nextSignoffs);
-      setAuditLog(auditRes.data || []);
+      setAuditLog(auditRows);
       setStatus("Connected to Supabase.");
-    } catch (err: any) {
-      setStatus(err.message || "Failed to load data.");
+    } catch (err: unknown) {
+      setStatus(err instanceof Error ? err.message : "Failed to load data.");
     } finally {
       setBusy(false);
     }
@@ -306,7 +357,6 @@ export default function HomePage() {
 
   useEffect(() => {
     loadCloudData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function saveCurrentPilot() {
@@ -344,8 +394,8 @@ export default function HomePage() {
 
       setStatus("Saved to Supabase.");
       await loadCloudData();
-    } catch (err: any) {
-      setStatus(err.message || "Save failed.");
+    } catch (err: unknown) {
+      setStatus(err instanceof Error ? err.message : "Save failed.");
     } finally {
       setBusy(false);
     }
@@ -416,8 +466,9 @@ export default function HomePage() {
         );
 
         console.log("EmailJS success:", emailResult);
-     } catch (emailErr: any) {
-        console.error("EmailJS failed:", emailErr?.text || emailErr?.message || emailErr);
+      } catch (emailErr: unknown) {
+        const message = emailErr instanceof Error ? emailErr.message : String(emailErr);
+        console.error("EmailJS failed:", message);
         setStatus("Month signed and locked, but email failed. Check console.");
       }
 
@@ -446,8 +497,8 @@ export default function HomePage() {
       setCertifyChecked(false);
       await loadCloudData();
       setStatus("Month signed and locked.");
-    } catch (err: any) {
-      setStatus(err.message || "Sign-off failed.");
+    } catch (err: unknown) {
+      setStatus(err instanceof Error ? err.message : "Sign-off failed.");
     } finally {
       setBusy(false);
     }
@@ -457,10 +508,12 @@ export default function HomePage() {
     if (userRole !== "admin" || !activeSignoff) return;
     setBusy(true);
     try {
-      const { error } = await supabase.from("month_signoffs")
+      const { error } = await supabase
+        .from("month_signoffs")
         .update({ locked: false })
         .eq("pilot_name", selectedPilot)
         .eq("month_key", activeMonthKey);
+
       if (error) throw error;
 
       await supabase.from("audit_events").insert({
@@ -473,8 +526,8 @@ export default function HomePage() {
 
       setStatus("Month unlocked.");
       await loadCloudData();
-    } catch (err: any) {
-      setStatus(err.message || "Unlock failed.");
+    } catch (err: unknown) {
+      setStatus(err instanceof Error ? err.message : "Unlock failed.");
     } finally {
       setBusy(false);
     }
@@ -491,7 +544,7 @@ export default function HomePage() {
     }));
   }
 
-  function badgeClass(type: string, value: any) {
+  function badgeClass(type: string, value: unknown) {
     if (type === "rest") {
       if (value === "24+") return "badge green";
       if (value === "") return "badge muted";
@@ -499,7 +552,7 @@ export default function HomePage() {
     }
     if (type === "duty") {
       if (value === null || value === "") return "badge muted";
-      return value > 14 ? "badge red" : "badge green";
+      return Number(value) > 14 ? "badge red" : "badge green";
     }
     if (type === "currency") return value === "CURRENT" ? "badge green" : "badge red";
     if (type === "issue") return value ? "badge amber" : "badge green";
@@ -514,7 +567,9 @@ export default function HomePage() {
             <h1>Flight &amp; Duty Log</h1>
             <p className="subtle">Deployable Next.js + Supabase version with sign-off, locking, and audit trail.</p>
           </div>
-          <button className="btn" onClick={saveCurrentPilot} disabled={busy}>{busy ? "Working..." : "Save to Cloud"}</button>
+          <button className="btn" onClick={saveCurrentPilot} disabled={busy}>
+            {busy ? "Working..." : "Save to Cloud"}
+          </button>
         </div>
 
         <div className="card">
@@ -564,14 +619,37 @@ export default function HomePage() {
           <div className="notice">{CERT_TEXT}</div>
           <div className="sign-row">
             <div className="sign-controls">
-              <input className="input" value={signatureDraft} onChange={(e) => setSignatureDraft(e.target.value)} placeholder="Type full name to sign" disabled={selectedMonth === "All" || activeMonthLocked} />
+              <input
+                className="input"
+                value={signatureDraft}
+                onChange={(e) => setSignatureDraft(e.target.value)}
+                placeholder="Type full name to sign"
+                disabled={selectedMonth === "All" || activeMonthLocked}
+              />
               <label className="checkbox">
-                <input type="checkbox" checked={certifyChecked} onChange={(e) => setCertifyChecked(e.target.checked)} disabled={selectedMonth === "All" || activeMonthLocked} />
+                <input
+                  type="checkbox"
+                  checked={certifyChecked}
+                  onChange={(e) => setCertifyChecked(e.target.checked)}
+                  disabled={selectedMonth === "All" || activeMonthLocked}
+                />
                 <span>I acknowledge this digital signature represents my certification of the selected month.</span>
               </label>
             </div>
-            <button className="btn" onClick={signMonth} disabled={!signatureDraft.trim() || !certifyChecked || selectedMonth === "All" || activeMonthLocked}>Sign Month</button>
-            <button className="btn secondary" onClick={unlockMonth} disabled={userRole !== "admin" || !activeMonthLocked}>Unlock Month</button>
+            <button
+              className="btn"
+              onClick={signMonth}
+              disabled={!signatureDraft.trim() || !certifyChecked || selectedMonth === "All" || activeMonthLocked}
+            >
+              Sign Month
+            </button>
+            <button
+              className="btn secondary"
+              onClick={unlockMonth}
+              disabled={userRole !== "admin" || !activeMonthLocked}
+            >
+              Unlock Month
+            </button>
           </div>
         </div>
 
@@ -588,7 +666,7 @@ export default function HomePage() {
                 </tr>
               </thead>
               <tbody>
-                {visibleRows.map((row: any) => {
+                {visibleRows.map((row) => {
                   const rowLocked = Boolean(signoffs[selectedPilot]?.[row.monthKey]?.locked);
                   return (
                     <tr key={row.date}>
@@ -623,12 +701,16 @@ export default function HomePage() {
         <div className="card">
           <h2>Recent Audit Events</h2>
           <div className="audit-list">
-            {auditLog.length === 0 ? <div className="subtle">No audit events yet.</div> : auditLog.map((item, idx) => (
-              <div key={idx} className="audit-item">
-                <div><strong>{item.action}</strong> — {item.actor_name || "System"}</div>
-                <div className="subtle">{item.created_at ? new Date(item.created_at).toLocaleString() : ""}</div>
-              </div>
-            ))}
+            {auditLog.length === 0 ? (
+              <div className="subtle">No audit events yet.</div>
+            ) : (
+              auditLog.map((item, idx) => (
+                <div key={idx} className="audit-item">
+                  <div><strong>{item.action}</strong> — {item.actor_name || "System"}</div>
+                  <div className="subtle">{item.created_at ? new Date(item.created_at).toLocaleString() : ""}</div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       </div>
