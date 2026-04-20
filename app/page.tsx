@@ -1,9 +1,9 @@
-
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabase";
 import emailjs from "@emailjs/browser";
+
 type Row = {
   date: string;
   dutyIn: string;
@@ -28,11 +28,14 @@ const PILOTS = ["Reyna", "Clark", "Millea", "Walsh"];
 const MONTHS = ["All", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const CERT_TEXT =
   "I certify that this month’s duty, flight time, landing, rest, and exceedance entries are complete and accurate to the best of my knowledge.";
+
 const EMAILJS_SERVICE_ID = "service_jkhfj8f";
 const EMAILJS_TEMPLATE_ID = "template_i71y0rr";
 const EMAILJS_PUBLIC_KEY = "w35RaQpB8GMh64M41";
 
-const DUTY_LOG_RECIPIENTS = "bwalsh@superiorhelicopter.com, shshanger@superiorhelicopter.com";
+// test with one address first
+const DUTY_LOG_RECIPIENTS = "bwalsh@superiorhelicopter.com";
+
 const emptyRow = (date: string): Row => ({
   date,
   dutyIn: "OFF",
@@ -306,136 +309,150 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  
-   async function saveCurrentPilot() {
-  setBusy(true);
-  try {
-    const payload = (data[selectedPilot] || []).map((row) => ({
-      pilot_name: selectedPilot,
-      log_date: row.date,
-      duty_in: row.dutyIn || null,
-      duty_out: row.dutyOut || null,
-      flight_hours: String(row.flightHours) === "" ? null : Number(row.flightHours),
-      day_landings: String(row.dayLandings) === "" ? null : Number(row.dayLandings),
-      night_landings: String(row.nightLandings) === "" ? null : Number(row.nightLandings),
-      remarks: row.remarks || null,
-      exceedance_reason: row.exceedanceReason || null,
-      approved_by: row.approvedBy || null,
-      approval_time: row.approvalTime || null,
-      month_key: monthKeyFromDate(row.date),
-      updated_by_name: actorName,
-    }));
+  async function saveCurrentPilot() {
+    setBusy(true);
+    try {
+      const payload = (data[selectedPilot] || []).map((row) => ({
+        pilot_name: selectedPilot,
+        log_date: row.date,
+        duty_in: row.dutyIn || null,
+        duty_out: row.dutyOut || null,
+        flight_hours: String(row.flightHours) === "" ? null : Number(row.flightHours),
+        day_landings: String(row.dayLandings) === "" ? null : Number(row.dayLandings),
+        night_landings: String(row.nightLandings) === "" ? null : Number(row.nightLandings),
+        remarks: row.remarks || null,
+        exceedance_reason: row.exceedanceReason || null,
+        approved_by: row.approvedBy || null,
+        approval_time: row.approvalTime || null,
+        month_key: monthKeyFromDate(row.date),
+        updated_by_name: actorName,
+      }));
 
-    const { error } = await supabase
-      .from("duty_logs")
-      .upsert(payload, { onConflict: "pilot_name,log_date" });
+      const { error } = await supabase
+        .from("duty_logs")
+        .upsert(payload, { onConflict: "pilot_name,log_date" });
 
-    if (error) throw error;
-await emailjs.send(
-  EMAILJS_SERVICE_ID,
-  EMAILJS_TEMPLATE_ID,
-  {
-    to_email: DUTY_LOG_RECIPIENTS,
-    pilot_name: selectedPilot,
-    month: activeMonthKey,
-    signed_name: signatureDraft.trim(),
-  },
-  EMAILJS_PUBLIC_KEY
-);
-    await supabase.from("audit_events").insert({
-      pilot_name: selectedPilot,
-      month_key: activeMonthKey,
-      actor_name: actorName,
-      action: "LOGS_SAVED",
-      details: { scope: "pilot-year", year: 2026 },
-    });
+      if (error) throw error;
 
-    setStatus("Saved to Supabase.");
-    await loadCloudData();
-  } catch (err: any) {
-    setStatus(err.message || "Save failed.");
-  } finally {
-    setBusy(false);
-  }
-}
-
-async function signMonth() {
-  if (!signatureDraft.trim() || !certifyChecked || selectedMonth === "All") return;
-  setBusy(true);
-  try {
-    const monthRows = (data[selectedPilot] || []).filter(
-      (row) => monthKeyFromDate(row.date) === activeMonthKey
-    );
-
-    const payload = monthRows.map((row) => ({
-      pilot_name: selectedPilot,
-      log_date: row.date,
-      duty_in: row.dutyIn || null,
-      duty_out: row.dutyOut || null,
-      flight_hours: String(row.flightHours) === "" ? null : Number(row.flightHours),
-      day_landings: String(row.dayLandings) === "" ? null : Number(row.dayLandings),
-      night_landings: String(row.nightLandings) === "" ? null : Number(row.nightLandings),
-      remarks: row.remarks || null,
-      exceedance_reason: row.exceedanceReason || null,
-      approved_by: row.approvedBy || null,
-      approval_time: row.approvalTime || null,
-      month_key: monthKeyFromDate(row.date),
-      updated_by_name: actorName,
-    }));
-
-    const saveRes = await supabase
-      .from("duty_logs")
-      .upsert(payload, { onConflict: "pilot_name,log_date" });
-
-    if (saveRes.error) throw saveRes.error;
-
-    const { error } = await supabase
-      .from("month_signoffs")
-      .upsert(
-        {
-          pilot_name: selectedPilot,
-          month_key: activeMonthKey,
-          signed_name: signatureDraft.trim(),
-          signed_at: new Date().toISOString(),
-          locked: true,
-          certification_text: CERT_TEXT,
-        },
-        { onConflict: "pilot_name,month_key" }
-      );
-
-    if (error) throw error;
-
-    await supabase.from("audit_events").insert([
-      {
+      await supabase.from("audit_events").insert({
         pilot_name: selectedPilot,
         month_key: activeMonthKey,
         actor_name: actorName,
         action: "LOGS_SAVED",
-        details: {
-          scope: "selected-month",
-          month_key: activeMonthKey,
-          triggered_by: "sign_month",
-        },
-      },
-      {
-        pilot_name: selectedPilot,
-        month_key: activeMonthKey,
-        actor_name: actorName,
-        action: "MONTH_SIGNED",
-        details: { signed_name: signatureDraft.trim() },
-      },
-    ]);
+        details: { scope: "pilot-year", year: 2026 },
+      });
 
-    setSignatureDraft("");
-    setCertifyChecked(false);
-    await loadCloudData();
-    setStatus("Month signed and locked.");
-  } catch (err: any) {
-    setStatus(err.message || "Sign-off failed.");
-  } finally {
-    setBusy(false);
+      setStatus("Saved to Supabase.");
+      await loadCloudData();
+    } catch (err: any) {
+      setStatus(err.message || "Save failed.");
+    } finally {
+      setBusy(false);
+    }
   }
-}
+
+  async function signMonth() {
+    if (!signatureDraft.trim() || !certifyChecked || selectedMonth === "All") return;
+    setBusy(true);
+    try {
+      const monthRows = (data[selectedPilot] || []).filter(
+        (row) => monthKeyFromDate(row.date) === activeMonthKey
+      );
+
+      const payload = monthRows.map((row) => ({
+        pilot_name: selectedPilot,
+        log_date: row.date,
+        duty_in: row.dutyIn || null,
+        duty_out: row.dutyOut || null,
+        flight_hours: String(row.flightHours) === "" ? null : Number(row.flightHours),
+        day_landings: String(row.dayLandings) === "" ? null : Number(row.dayLandings),
+        night_landings: String(row.nightLandings) === "" ? null : Number(row.nightLandings),
+        remarks: row.remarks || null,
+        exceedance_reason: row.exceedanceReason || null,
+        approved_by: row.approvedBy || null,
+        approval_time: row.approvalTime || null,
+        month_key: monthKeyFromDate(row.date),
+        updated_by_name: actorName,
+      }));
+
+      const saveRes = await supabase
+        .from("duty_logs")
+        .upsert(payload, { onConflict: "pilot_name,log_date" });
+
+      if (saveRes.error) throw saveRes.error;
+
+      const signedAtIso = new Date().toISOString();
+
+      const { error } = await supabase
+        .from("month_signoffs")
+        .upsert(
+          {
+            pilot_name: selectedPilot,
+            month_key: activeMonthKey,
+            signed_name: signatureDraft.trim(),
+            signed_at: signedAtIso,
+            locked: true,
+            certification_text: CERT_TEXT,
+          },
+          { onConflict: "pilot_name,month_key" }
+        );
+
+      if (error) throw error;
+
+      try {
+        const emailResult = await emailjs.send(
+          EMAILJS_SERVICE_ID,
+          EMAILJS_TEMPLATE_ID,
+          {
+            to_email: DUTY_LOG_RECIPIENTS,
+            pilot_name: selectedPilot,
+            month: activeMonthKey,
+            month_label: monthLabelFromKey(activeMonthKey),
+            signed_name: signatureDraft.trim(),
+            signed_at: new Date(signedAtIso).toLocaleString(),
+            status: "Signed and locked",
+          },
+          EMAILJS_PUBLIC_KEY
+        );
+
+        console.log("EmailJS success:", emailResult);
+      } catch (emailErr) {
+        console.error("EmailJS failed:", emailErr);
+        setStatus("Month signed and locked, but email failed. Check console.");
+      }
+
+      await supabase.from("audit_events").insert([
+        {
+          pilot_name: selectedPilot,
+          month_key: activeMonthKey,
+          actor_name: actorName,
+          action: "LOGS_SAVED",
+          details: {
+            scope: "selected-month",
+            month_key: activeMonthKey,
+            triggered_by: "sign_month",
+          },
+        },
+        {
+          pilot_name: selectedPilot,
+          month_key: activeMonthKey,
+          actor_name: actorName,
+          action: "MONTH_SIGNED",
+          details: { signed_name: signatureDraft.trim() },
+        },
+      ]);
+
+      setSignatureDraft("");
+      setCertifyChecked(false);
+      await loadCloudData();
+      setStatus("Month signed and locked.");
+    } catch (err: any) {
+      setStatus(err.message || "Sign-off failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function unlockMonth() {
     if (userRole !== "admin" || !activeSignoff) return;
     setBusy(true);
