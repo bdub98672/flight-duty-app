@@ -302,78 +302,126 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function saveCurrentPilot() {
-    setBusy(true);
-    try {
-      const payload = (data[selectedPilot] || []).map((row) => ({
-        pilot_name: selectedPilot,
-        log_date: row.date,
-        duty_in: row.dutyIn || null,
-        duty_out: row.dutyOut || null,
-        flight_hours: String(row.flightHours) === "" ? null : Number(row.flightHours),
-        day_landings: String(row.dayLandings) === "" ? null : Number(row.dayLandings),
-        night_landings: String(row.nightLandings) === "" ? null : Number(row.nightLandings),
-        remarks: row.remarks || null,
-        exceedance_reason: row.exceedanceReason || null,
-        approved_by: row.approvedBy || null,
-        approval_time: row.approvalTime || null,
-        month_key: monthKeyFromDate(row.date),
-        updated_by_name: actorName,
-      }));
+  
+   async function saveCurrentPilot() {
+  setBusy(true);
+  try {
+    const payload = (data[selectedPilot] || []).map((row) => ({
+      pilot_name: selectedPilot,
+      log_date: row.date,
+      duty_in: row.dutyIn || null,
+      duty_out: row.dutyOut || null,
+      flight_hours: String(row.flightHours) === "" ? null : Number(row.flightHours),
+      day_landings: String(row.dayLandings) === "" ? null : Number(row.dayLandings),
+      night_landings: String(row.nightLandings) === "" ? null : Number(row.nightLandings),
+      remarks: row.remarks || null,
+      exceedance_reason: row.exceedanceReason || null,
+      approved_by: row.approvedBy || null,
+      approval_time: row.approvalTime || null,
+      month_key: monthKeyFromDate(row.date),
+      updated_by_name: actorName,
+    }));
 
-      const { error } = await supabase.from("duty_logs").upsert(payload, { onConflict: "pilot_name,log_date" });
-      if (error) throw error;
+    const { error } = await supabase
+      .from("duty_logs")
+      .upsert(payload, { onConflict: "pilot_name,log_date" });
 
-      await supabase.from("audit_events").insert({
+    if (error) throw error;
+
+    await supabase.from("audit_events").insert({
+      pilot_name: selectedPilot,
+      month_key: activeMonthKey,
+      actor_name: actorName,
+      action: "LOGS_SAVED",
+      details: { scope: "pilot-year", year: 2026 },
+    });
+
+    setStatus("Saved to Supabase.");
+    await loadCloudData();
+  } catch (err: any) {
+    setStatus(err.message || "Save failed.");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function signMonth() {
+  if (!signatureDraft.trim() || !certifyChecked || selectedMonth === "All") return;
+  setBusy(true);
+  try {
+    const monthRows = (data[selectedPilot] || []).filter(
+      (row) => monthKeyFromDate(row.date) === activeMonthKey
+    );
+
+    const payload = monthRows.map((row) => ({
+      pilot_name: selectedPilot,
+      log_date: row.date,
+      duty_in: row.dutyIn || null,
+      duty_out: row.dutyOut || null,
+      flight_hours: String(row.flightHours) === "" ? null : Number(row.flightHours),
+      day_landings: String(row.dayLandings) === "" ? null : Number(row.dayLandings),
+      night_landings: String(row.nightLandings) === "" ? null : Number(row.nightLandings),
+      remarks: row.remarks || null,
+      exceedance_reason: row.exceedanceReason || null,
+      approved_by: row.approvedBy || null,
+      approval_time: row.approvalTime || null,
+      month_key: monthKeyFromDate(row.date),
+      updated_by_name: actorName,
+    }));
+
+    const saveRes = await supabase
+      .from("duty_logs")
+      .upsert(payload, { onConflict: "pilot_name,log_date" });
+
+    if (saveRes.error) throw saveRes.error;
+
+    const { error } = await supabase
+      .from("month_signoffs")
+      .upsert(
+        {
+          pilot_name: selectedPilot,
+          month_key: activeMonthKey,
+          signed_name: signatureDraft.trim(),
+          signed_at: new Date().toISOString(),
+          locked: true,
+          certification_text: CERT_TEXT,
+        },
+        { onConflict: "pilot_name,month_key" }
+      );
+
+    if (error) throw error;
+
+    await supabase.from("audit_events").insert([
+      {
         pilot_name: selectedPilot,
         month_key: activeMonthKey,
         actor_name: actorName,
         action: "LOGS_SAVED",
-        details: { scope: "pilot-year", year: 2026 },
-      });
-
-      setStatus("Saved to Supabase.");
-      await loadCloudData();
-    } catch (err: any) {
-      setStatus(err.message || "Save failed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function signMonth() {
-    if (!signatureDraft.trim() || !certifyChecked || selectedMonth === "All") return;
-    setBusy(true);
-    try {
-      const { error } = await supabase.from("month_signoffs").upsert({
-        pilot_name: selectedPilot,
-        month_key: activeMonthKey,
-        signed_name: signatureDraft.trim(),
-        signed_at: new Date().toISOString(),
-        locked: true,
-        certification_text: CERT_TEXT,
-      }, { onConflict: "pilot_name,month_key" });
-      if (error) throw error;
-
-      await supabase.from("audit_events").insert({
+        details: {
+          scope: "selected-month",
+          month_key: activeMonthKey,
+          triggered_by: "sign_month",
+        },
+      },
+      {
         pilot_name: selectedPilot,
         month_key: activeMonthKey,
         actor_name: actorName,
         action: "MONTH_SIGNED",
         details: { signed_name: signatureDraft.trim() },
-      });
+      },
+    ]);
 
-      setSignatureDraft("");
-      setCertifyChecked(false);
-      setStatus("Month signed and locked.");
-      await loadCloudData();
-    } catch (err: any) {
-      setStatus(err.message || "Sign-off failed.");
-    } finally {
-      setBusy(false);
-    }
+    setSignatureDraft("");
+    setCertifyChecked(false);
+    await loadCloudData();
+    setStatus("Month signed and locked.");
+  } catch (err: any) {
+    setStatus(err.message || "Sign-off failed.");
+  } finally {
+    setBusy(false);
   }
-
+}
   async function unlockMonth() {
     if (userRole !== "admin" || !activeSignoff) return;
     setBusy(true);
