@@ -1,6 +1,8 @@
+import "./globals.css";
+
 export const metadata = {
   title: "Flight Duty Log",
-  description: "Build test",
+  description: "Deployable Next.js + Supabase flight and duty log",
 };
 
 export default function RootLayout({
