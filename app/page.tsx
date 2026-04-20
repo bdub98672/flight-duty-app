@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabase";
-
+import emailjs from "@emailjs/browser";
 type Row = {
   date: string;
   dutyIn: string;
@@ -28,7 +28,11 @@ const PILOTS = ["Reyna", "Clark", "Millea", "Walsh"];
 const MONTHS = ["All", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const CERT_TEXT =
   "I certify that this month’s duty, flight time, landing, rest, and exceedance entries are complete and accurate to the best of my knowledge.";
+const EMAILJS_SERVICE_ID = "service_jkhfj8f";
+const EMAILJS_TEMPLATE_ID = "template_i71y0rr";
+const EMAILJS_PUBLIC_KEY = "w35RaQpB8GMh64M41";
 
+const DUTY_LOG_RECIPIENTS = "bwalsh@superiorhelicopter.com, shshanger@superiorhelicopter.com";
 const emptyRow = (date: string): Row => ({
   date,
   dutyIn: "OFF",
