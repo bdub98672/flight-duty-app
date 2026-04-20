@@ -331,7 +331,17 @@ export default function HomePage() {
       .upsert(payload, { onConflict: "pilot_name,log_date" });
 
     if (error) throw error;
-
+await emailjs.send(
+  EMAILJS_SERVICE_ID,
+  EMAILJS_TEMPLATE_ID,
+  {
+    to_email: DUTY_LOG_RECIPIENTS,
+    pilot_name: selectedPilot,
+    month: activeMonthKey,
+    signed_name: signatureDraft.trim(),
+  },
+  EMAILJS_PUBLIC_KEY
+);
     await supabase.from("audit_events").insert({
       pilot_name: selectedPilot,
       month_key: activeMonthKey,
