@@ -416,8 +416,8 @@ export default function HomePage() {
         );
 
         console.log("EmailJS success:", emailResult);
-      } catch (emailErr) {
-        console.error("EmailJS failed:", emailErr);
+     } catch (emailErr: any) {
+        console.error("EmailJS failed:", emailErr?.text || emailErr?.message || emailErr);
         setStatus("Month signed and locked, but email failed. Check console.");
       }
 
