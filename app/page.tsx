@@ -140,7 +140,7 @@ export default function Page() {
     const { data, error } = await supabase
       .from('duty_logs')
       .select('*')
-      .eq('month', month)
+      .eq('month_key', month)
       .order('day', { ascending: true });
 
     if (error) {
