@@ -1,954 +1,1079 @@
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { useEffect, useMemo, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
 
-type MonthKey =
-  | 'january'
-  | 'february'
-  | 'march'
-  | 'april'
-  | 'may'
-  | 'june'
-  | 'july'
-  | 'august'
-  | 'september'
-  | 'october'
-  | 'november'
-  | 'december';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
-type PilotName = 'Walsh' | 'Clark' | 'Millea' | 'Reyna';
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-type DbRow = {
-  id?: number;
+const PILOTS = ["Reyna", "Clark", "Millea", "Walsh"];
+
+const MONTHS = [
+  { value: "ALL", label: "All" },
+  { value: "01", label: "Jan" },
+  { value: "02", label: "Feb" },
+  { value: "03", label: "Mar" },
+  { value: "04", label: "Apr" },
+  { value: "05", label: "May" },
+  { value: "06", label: "Jun" },
+  { value: "07", label: "Jul" },
+  { value: "08", label: "Aug" },
+  { value: "09", label: "Sep" },
+  { value: "10", label: "Oct" },
+  { value: "11", label: "Nov" },
+  { value: "12", label: "Dec" },
+];
+
+type DutyRow = {
+  id: string | null;
   pilot_name: string;
-  log_date: string;
-  month_key: string;
-  duty_in: string | null;
-  duty_out: string | null;
-  flight_hours: number | null;
-  day_landings: number | null;
-  night_landings: number | null;
-  remarks: string | null;
-  duty_exceedance: boolean | null;
-  exceedance_reason: string | null;
-  approved_by: string | null;
-  approval_time: string | null;
-  signed_at: string | null;
-  signed_by: string | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-};
-
-type RowInput = {
-  day: number;
   log_date: string;
   duty_in: string;
   duty_out: string;
   flight_hours: string;
-  day_landings: string;
-  night_landings: string;
+  day_landings: number;
+  night_landings: number;
   remarks: string;
   exceedance_reason: string;
   approved_by: string;
   approval_time: string;
-  signed_at: string | null;
-  signed_by: string | null;
+  month_key: string;
 };
 
-type DerivedRow = {
-  duty_hours: string;
-  rest_24h: string;
-  flight_status_24h: string;
-  day_currency: string;
-  night_currency: string;
-  month_running_total: string;
-  quarter_hours: string;
-  two_quarter_hours: string;
-  year_hours: string;
-  quarter_rest_days: string;
-  duty_exceedance: boolean;
+type MonthSignoff = {
+  id?: string;
+  pilot_name: string;
+  month_key: string;
+  signed_name?: string;
+  signed_at?: string;
+  locked?: boolean;
+  certification_text?: string;
 };
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-if (!supabaseUrl) throw new Error('NEXT_PUBLIC_SUPABASE_URL is required.');
-if (!supabaseAnonKey) throw new Error('NEXT_PUBLIC_SUPABASE_ANON_KEY is required.');
-
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-const PILOTS: PilotName[] = ['Walsh', 'Clark', 'Millea', 'Reyna'];
-
-const MONTHS: { key: MonthKey; label: string; days: number; monthIndex: number }[] = [
-  { key: 'january', label: 'January', days: 31, monthIndex: 0 },
-  { key: 'february', label: 'February', days: 28, monthIndex: 1 },
-  { key: 'march', label: 'March', days: 31, monthIndex: 2 },
-  { key: 'april', label: 'April', days: 30, monthIndex: 3 },
-  { key: 'may', label: 'May', days: 31, monthIndex: 4 },
-  { key: 'june', label: 'June', days: 30, monthIndex: 5 },
-  { key: 'july', label: 'July', days: 31, monthIndex: 6 },
-  { key: 'august', label: 'August', days: 31, monthIndex: 7 },
-  { key: 'september', label: 'September', days: 30, monthIndex: 8 },
-  { key: 'october', label: 'October', days: 31, monthIndex: 9 },
-  { key: 'november', label: 'November', days: 30, monthIndex: 10 },
-  { key: 'december', label: 'December', days: 31, monthIndex: 11 },
-];
-
-const ACTIVE_YEAR = new Date().getFullYear();
-
-function pad2(value: number): string {
-  return String(value).padStart(2, '0');
+function pad(n: number) {
+  return String(n).padStart(2, "0");
 }
 
-function monthLabel(month: MonthKey): string {
-  return MONTHS.find((m) => m.key === month)?.label ?? month;
+function makeDateString(year: number, month: number, day: number) {
+  return `${year}-${pad(month)}-${pad(day)}`;
 }
 
-function isoDate(year: number, monthIndex: number, day: number): string {
-  return `${year}-${pad2(monthIndex + 1)}-${pad2(day)}`;
+function daysInMonth(year: number, month: number) {
+  return new Date(year, month, 0).getDate();
 }
 
-function parseNumber(value: string): number {
-  const num = Number(value);
-  return Number.isFinite(num) ? num : 0;
-}
-
-function formatHours(value: number): string {
-  return Number.isFinite(value) ? value.toFixed(2) : '';
-}
-
-function normalizeTimeInput(value: string): string {
-  const trimmed = value.trim().toUpperCase();
-  if (!trimmed) return '';
-  if (trimmed === 'OFF') return 'OFF';
-
-  const digits = trimmed.replace(/[^\d]/g, '');
-
-  if (digits.length === 4) {
-    const hh = Number(digits.slice(0, 2));
-    const mm = Number(digits.slice(2, 4));
-    if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
-      return `${pad2(hh)}:${pad2(mm)}`;
+function buildYearRows(year: number, pilot: string): DutyRow[] {
+  const rows: DutyRow[] = [];
+  for (let month = 1; month <= 12; month++) {
+    const count = daysInMonth(year, month);
+    for (let day = 1; day <= count; day++) {
+      const log_date = makeDateString(year, month, day);
+      rows.push({
+        id: null,
+        pilot_name: pilot,
+        log_date,
+        duty_in: "OFF",
+        duty_out: "",
+        flight_hours: "",
+        day_landings: 0,
+        night_landings: 0,
+        remarks: "",
+        exceedance_reason: "",
+        approved_by: "",
+        approval_time: "",
+        month_key: `${year}-${pad(month)}`,
+      });
     }
   }
-
-  if (/^\d{1,2}:\d{2}$/.test(trimmed)) {
-    const [hh, mm] = trimmed.split(':').map(Number);
-    if (hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
-      return `${pad2(hh)}:${pad2(mm)}`;
-    }
-  }
-
-  return value.trim();
+  return rows;
 }
 
-function timeToMinutes(value: string): number | null {
-  if (!value) return null;
-  if (value.trim().toUpperCase() === 'OFF') return null;
+function normalizeTimeInput(value: string) {
+  const raw = value.replace(/[^\d:]/g, "").trim();
+  if (!raw) return "";
 
+  if (raw.includes(":")) {
+    const [h = "", m = ""] = raw.split(":");
+    const hh = Math.min(23, Math.max(0, Number(h || "0")));
+    const mm = Math.min(59, Math.max(0, Number(m || "0")));
+    return `${pad(hh)}:${pad(mm)}`;
+  }
+
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length <= 2) {
+    const hh = Math.min(23, Math.max(0, Number(digits || "0")));
+    return `${pad(hh)}:00`;
+  }
+
+  const h = digits.slice(0, digits.length - 2);
+  const m = digits.slice(-2);
+  const hh = Math.min(23, Math.max(0, Number(h || "0")));
+  const mm = Math.min(59, Math.max(0, Number(m || "0")));
+  return `${pad(hh)}:${pad(mm)}`;
+}
+
+function parseTimeToMinutes(value: string) {
+  if (!value || value.toUpperCase() === "OFF") return null;
   const normalized = normalizeTimeInput(value);
-  if (!/^\d{2}:\d{2}$/.test(normalized)) return null;
-
-  const [hh, mm] = normalized.split(':').map(Number);
+  const [hh, mm] = normalized.split(":").map(Number);
+  if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
   return hh * 60 + mm;
 }
 
-function makeDateTime(logDate: string, timeText: string): Date | null {
-  const minutes = timeToMinutes(timeText);
-  if (minutes === null) return null;
-
-  const [y, m, d] = logDate.split('-').map(Number);
-  const dt = new Date(y, m - 1, d, 0, 0, 0, 0);
-  dt.setMinutes(minutes);
-  return dt;
+function minutesToHoursString(minutes: number) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${h}:${pad(m)}`;
 }
 
-function computeDutyHours(dutyIn: string, dutyOut: string): number {
-  const inMin = timeToMinutes(dutyIn);
-  const outMin = timeToMinutes(dutyOut);
-
-  if (inMin === null || outMin === null) return 0;
-
-  let diff = outMin - inMin;
-  if (diff < 0) diff += 24 * 60;
-
-  return diff / 60;
+function calcDutyMinutes(dutyIn: string, dutyOut: string) {
+  if (!dutyIn || dutyIn.toUpperCase() === "OFF" || !dutyOut) return null;
+  const start = parseTimeToMinutes(dutyIn);
+  const end = parseTimeToMinutes(dutyOut);
+  if (start === null || end === null) return null;
+  if (end >= start) return end - start;
+  return end + 1440 - start;
 }
 
-function isOffRow(row: RowInput): boolean {
-  return row.duty_in.trim().toUpperCase() === 'OFF' || row.duty_in.trim() === '';
+function parseFlightHours(value: string) {
+  const n = parseFloat((value || "").trim());
+  return Number.isFinite(n) ? n : 0;
 }
 
-function quarterStartMonth(monthIndex: number): number {
-  return Math.floor(monthIndex / 3) * 3;
+function formatFlightHours(value: number) {
+  return value.toFixed(1);
 }
 
-function previousQuarterStartMonth(monthIndex: number): number {
-  const start = quarterStartMonth(monthIndex) - 3;
-  return Math.max(0, start);
+function getQuarterFromMonth(month: string) {
+  const m = Number(month);
+  if (m >= 1 && m <= 3) return 1;
+  if (m >= 4 && m <= 6) return 2;
+  if (m >= 7 && m <= 9) return 3;
+  return 4;
 }
 
-function buildEmptyRows(month: MonthKey, year: number): RowInput[] {
-  const config = MONTHS.find((m) => m.key === month)!;
-
-  return Array.from({ length: config.days }, (_, index) => ({
-    day: index + 1,
-    log_date: isoDate(year, config.monthIndex, index + 1),
-    duty_in: 'OFF',
-    duty_out: '',
-    flight_hours: '',
-    day_landings: '',
-    night_landings: '',
-    remarks: '',
-    exceedance_reason: '',
-    approved_by: '',
-    approval_time: '',
-    signed_at: null,
-    signed_by: null,
-  }));
+function getMonthFromDate(dateStr: string) {
+  return dateStr.slice(5, 7);
 }
 
-function fromDbRow(db: DbRow): RowInput {
-  const dt = new Date(`${db.log_date}T00:00:00`);
-
-  return {
-    day: dt.getDate(),
-    log_date: db.log_date,
-    duty_in: db.duty_in ?? 'OFF',
-    duty_out: db.duty_out ?? '',
-    flight_hours: db.flight_hours != null ? String(db.flight_hours) : '',
-    day_landings: db.day_landings != null ? String(db.day_landings) : '',
-    night_landings: db.night_landings != null ? String(db.night_landings) : '',
-    remarks: db.remarks ?? '',
-    exceedance_reason: db.exceedance_reason ?? '',
-    approved_by: db.approved_by ?? '',
-    approval_time: db.approval_time ?? '',
-    signed_at: db.signed_at ?? null,
-    signed_by: db.signed_by ?? null,
-  };
+function getQuarterFromDate(dateStr: string) {
+  return getQuarterFromMonth(getMonthFromDate(dateStr));
 }
 
-function toDbRow(pilot: PilotName, month: MonthKey, row: RowInput): DbRow {
-  const dutyIn = normalizeTimeInput(row.duty_in);
-  const dutyOut = normalizeTimeInput(row.duty_out);
-  const dutyHours = computeDutyHours(dutyIn, dutyOut);
-
-  const parsedDay = row.day_landings.trim() ? parseInt(row.day_landings, 10) : null;
-  const parsedNight = row.night_landings.trim() ? parseInt(row.night_landings, 10) : null;
-
-  return {
-    pilot_name: pilot,
-    log_date: row.log_date,
-    month_key: month,
-    duty_in: dutyIn || null,
-    duty_out: dutyOut || null,
-    flight_hours: row.flight_hours.trim() ? parseNumber(row.flight_hours) : null,
-    day_landings: Number.isFinite(parsedDay as number) ? parsedDay : null,
-    night_landings: Number.isFinite(parsedNight as number) ? parsedNight : null,
-    remarks: row.remarks.trim() || null,
-    duty_exceedance: dutyHours > 14,
-    exceedance_reason: row.exceedance_reason.trim() || null,
-    approved_by: row.approved_by.trim() || null,
-    approval_time: row.approval_time.trim() || null,
-    signed_at: row.signed_at,
-    signed_by: row.signed_by,
-  };
+function addDays(dateStr: string, days: number) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
-function mergeMonthRows(month: MonthKey, year: number, dbRows: DbRow[]): RowInput[] {
-  const emptyRows = buildEmptyRows(month, year);
-  const map = new Map<string, DbRow>();
-
-  for (const row of dbRows) {
-    map.set(row.log_date, row);
-  }
-
-  return emptyRows.map((row) => {
-    const found = map.get(row.log_date);
-    return found ? fromDbRow(found) : row;
+function prettyDate(dateStr: string) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    weekday: "short",
   });
 }
 
-function rowLocked(row: RowInput, monthSigned: boolean): boolean {
-  return monthSigned || Boolean(row.signed_at);
+function isMeaningfulRow(row: DutyRow) {
+  const flight = parseFlightHours(row.flight_hours);
+  return (
+    row.duty_in !== "OFF" ||
+    row.duty_out.trim() !== "" ||
+    flight > 0 ||
+    row.day_landings > 0 ||
+    row.night_landings > 0 ||
+    row.remarks.trim() !== "" ||
+    row.exceedance_reason.trim() !== "" ||
+    row.approved_by.trim() !== "" ||
+    row.approval_time.trim() !== ""
+  );
 }
 
-function buildYearDataset(currentMonthRows: RowInput[], allYearRows: DbRow[]): DbRow[] {
-  const currentMonthMap = new Map<string, DbRow>();
-
-  for (const row of currentMonthRows) {
-    currentMonthMap.set(row.log_date, {
-      pilot_name: '',
-      log_date: row.log_date,
-      month_key: '',
-      duty_in: normalizeTimeInput(row.duty_in) || null,
-      duty_out: normalizeTimeInput(row.duty_out) || null,
-      flight_hours: row.flight_hours.trim() ? parseNumber(row.flight_hours) : null,
-      day_landings: row.day_landings.trim() ? parseInt(row.day_landings, 10) : null,
-      night_landings: row.night_landings.trim() ? parseInt(row.night_landings, 10) : null,
-      remarks: row.remarks || null,
-      duty_exceedance: null,
-      exceedance_reason: row.exceedance_reason || null,
-      approved_by: row.approved_by || null,
-      approval_time: row.approval_time || null,
-      signed_at: row.signed_at,
-      signed_by: row.signed_by,
-    });
-  }
-
-  const merged = new Map<string, DbRow>();
-
-  for (const dbRow of allYearRows) {
-    merged.set(dbRow.log_date, dbRow);
-  }
-
-  for (const [logDate, row] of currentMonthMap.entries()) {
-    merged.set(logDate, row);
-  }
-
-  return Array.from(merged.values()).sort((a, b) => a.log_date.localeCompare(b.log_date));
-}
-
-function buildDerivedRows(rows: RowInput[], allYearRows: DbRow[], month: MonthKey): DerivedRow[] {
-  const yearDataset = buildYearDataset(rows, allYearRows);
-  const monthIndex = MONTHS.find((m) => m.key === month)!.monthIndex;
-  const qStart = quarterStartMonth(monthIndex);
-  const prevQStart = previousQuarterStartMonth(monthIndex);
-
-  return rows.map((row, index) => {
-    const currentDate = new Date(`${row.log_date}T00:00:00`);
-    const dutyHoursNum = computeDutyHours(row.duty_in, row.duty_out);
-    const flightHoursNum = parseNumber(row.flight_hours || '0');
-
-    let rest24h = '';
-    const previousRow = index > 0 ? rows[index - 1] : null;
-
-    if (previousRow) {
-      if (isOffRow(previousRow)) {
-        rest24h = '24+';
-      } else {
-        const prevOut = makeDateTime(previousRow.log_date, previousRow.duty_out);
-        const currentIn = makeDateTime(row.log_date, row.duty_in);
-
-        if (prevOut && currentIn) {
-          const diffHours = (currentIn.getTime() - prevOut.getTime()) / 3600000;
-          if (diffHours >= 24) rest24h = '24+';
-          else if (diffHours > 0) rest24h = diffHours.toFixed(2);
-        }
-      }
-    }
-
-    const flightStatus24h = flightHoursNum > 8 ? 'OVER 8.0' : 'OK';
-
-    const ninetyDaysAgo = new Date(currentDate);
-    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-
-    const prior90 = yearDataset.filter((r) => {
-      const d = new Date(`${r.log_date}T00:00:00`);
-      return d >= ninetyDaysAgo && d <= currentDate;
-    });
-
-    const dayLandingCount = prior90.reduce(
-      (sum, r) => sum + (r.day_landings ?? 0) + (r.night_landings ?? 0),
-      0
-    );
-
-    const nightLandingCount = prior90.reduce((sum, r) => sum + (r.night_landings ?? 0), 0);
-
-    const dayCurrency = dayLandingCount >= 3 ? 'CURRENT' : 'NOT CURRENT';
-    const nightCurrency = nightLandingCount >= 3 ? 'CURRENT' : 'NOT CURRENT';
-
-    const monthRowsUpToCurrent = rows.filter(
-      (r) => new Date(`${r.log_date}T00:00:00`) <= currentDate
-    );
-
-    const monthRunningTotal = monthRowsUpToCurrent.reduce(
-      (sum, r) => sum + parseNumber(r.flight_hours || '0'),
-      0
-    );
-
-    const quarterHours = yearDataset
-      .filter((r) => {
-        const d = new Date(`${r.log_date}T00:00:00`);
-        return d.getMonth() >= qStart && d.getMonth() < qStart + 3 && d <= currentDate;
-      })
-      .reduce((sum, r) => sum + (r.flight_hours ?? 0), 0);
-
-    const twoQuarterHours = yearDataset
-      .filter((r) => {
-        const d = new Date(`${r.log_date}T00:00:00`);
-        return d.getMonth() >= prevQStart && d.getMonth() < qStart;
-      })
-      .reduce((sum, r) => sum + (r.flight_hours ?? 0), 0);
-
-    const yearHours = yearDataset
-      .filter((r) => new Date(`${r.log_date}T00:00:00`) <= currentDate)
-      .reduce((sum, r) => sum + (r.flight_hours ?? 0), 0);
-
-    const quarterRestDays = rows.filter((r) => {
-      const d = new Date(`${r.log_date}T00:00:00`);
-      return d.getMonth() >= qStart && d.getMonth() < qStart + 3 && isOffRow(r);
-    }).length;
-
-    return {
-      duty_hours: dutyHoursNum ? dutyHoursNum.toFixed(2) : '',
-      rest_24h: rest24h,
-      flight_status_24h: flightStatus24h,
-      day_currency: dayCurrency,
-      night_currency: nightCurrency,
-      month_running_total: formatHours(monthRunningTotal),
-      quarter_hours: formatHours(quarterHours),
-      two_quarter_hours: formatHours(twoQuarterHours),
-      year_hours: formatHours(yearHours),
-      quarter_rest_days: String(quarterRestDays),
-      duty_exceedance: dutyHoursNum > 14,
-    };
-  });
-}
+const THIS_YEAR = new Date().getFullYear();
+const YEAR_OPTIONS = [THIS_YEAR - 1, THIS_YEAR, THIS_YEAR + 1, THIS_YEAR + 2];
 
 export default function Page() {
-  const [pilot, setPilot] = useState<PilotName>('Walsh');
-  const [month, setMonth] = useState<MonthKey>('january');
-  const [rows, setRows] = useState<RowInput[]>(buildEmptyRows('january', ACTIVE_YEAR));
-  const [allYearRows, setAllYearRows] = useState<DbRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [savingDay, setSavingDay] = useState<number | null>(null);
-  const [message, setMessage] = useState('');
-  const [monthSigned, setMonthSigned] = useState(false);
-  const [signing, setSigning] = useState(false);
-  const [signName, setSignName] = useState('');
+  const [selectedPilot, setSelectedPilot] = useState(PILOTS[0]);
+  const [selectedYear, setSelectedYear] = useState(THIS_YEAR);
+  const [selectedMonth, setSelectedMonth] = useState("ALL");
+  const [rows, setRows] = useState<DutyRow[]>([]);
+  const [allLoadedRows, setAllLoadedRows] = useState<DutyRow[]>([]);
+  const [signoffs, setSignoffs] = useState<Record<string, MonthSignoff>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
 
-  async function loadYearData(selectedPilot: PilotName) {
-    const start = `${ACTIVE_YEAR}-01-01`;
-    const end = `${ACTIVE_YEAR}-12-31`;
-
-    const { data, error } = await supabase
-      .from('duty_logs_v2')
-      .select('*')
-      .eq('pilot_name', selectedPilot)
-      .gte('log_date', start)
-      .lte('log_date', end)
-      .order('log_date', { ascending: true });
-
-    if (error) throw error;
-
-    return ((data as DbRow[]) ?? []).sort((a, b) => a.log_date.localeCompare(b.log_date));
-  }
-
-  async function loadMonth(selectedPilot: PilotName, selectedMonth: MonthKey) {
+  async function loadData(pilot: string, year: number) {
     setLoading(true);
-    setMessage('');
+    setMessage("");
 
-    try {
-      const yearData = await loadYearData(selectedPilot);
-      setAllYearRows(yearData);
+    const visibleYearRows = buildYearRows(year, pilot);
 
-      const monthData = yearData.filter((r) => r.month_key === selectedMonth);
-      const merged = mergeMonthRows(selectedMonth, ACTIVE_YEAR, monthData);
+    const queryStart = `${year - 1}-10-01`;
+    const queryEnd = `${year}-12-31`;
 
-      setRows(merged);
-      setMonthSigned(merged.some((r) => Boolean(r.signed_at)));
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Unknown load error';
-      setRows(buildEmptyRows(selectedMonth, ACTIVE_YEAR));
-      setAllYearRows([]);
-      setMonthSigned(false);
-      setMessage(`Load error: ${msg}`);
-    } finally {
+    const { data: dbRows, error: rowsError } = await supabase
+      .from("duty_logs_v2")
+      .select("*")
+      .eq("pilot_name", pilot)
+      .gte("log_date", queryStart)
+      .lte("log_date", queryEnd)
+      .order("log_date", { ascending: true });
+
+    const { data: signoffRows, error: signoffError } = await supabase
+      .from("month_signoffs")
+      .select("*")
+      .eq("pilot_name", pilot)
+      .gte("month_key", `${year}-01`)
+      .lte("month_key", `${year}-12`)
+      .order("month_key", { ascending: true });
+
+    if (rowsError) {
+      setMessage(`Load error: ${rowsError.message}`);
+      setRows(visibleYearRows);
+      setAllLoadedRows(visibleYearRows);
+      setSignoffs({});
       setLoading(false);
+      return;
     }
+
+    if (signoffError) {
+      setMessage(`Signoff load error: ${signoffError.message}`);
+    }
+
+    const db = (dbRows || []).map((r: any) => ({
+      id: r.id ?? null,
+      pilot_name: r.pilot_name ?? pilot,
+      log_date: r.log_date,
+      duty_in: r.duty_in ?? "OFF",
+      duty_out: r.duty_out ?? "",
+      flight_hours:
+        r.flight_hours === null || r.flight_hours === undefined ? "" : String(r.flight_hours),
+      day_landings: Number(r.day_landings ?? 0),
+      night_landings: Number(r.night_landings ?? 0),
+      remarks: r.remarks ?? "",
+      exceedance_reason: r.exceedance_reason ?? "",
+      approved_by: r.approved_by ?? "",
+      approval_time: r.approval_time ?? "",
+      month_key: r.month_key ?? `${r.log_date.slice(0, 7)}`,
+    })) as DutyRow[];
+
+    const dbByDate = new Map<string, DutyRow>();
+    db.forEach((r) => dbByDate.set(r.log_date, r));
+
+    const mergedVisibleYear = visibleYearRows.map((base) => {
+      const found = dbByDate.get(base.log_date);
+      return found ? found : base;
+    });
+
+    const lookbackRows = db.filter((r) => r.log_date < `${year}-01-01`);
+    const fullLoaded = [...lookbackRows, ...mergedVisibleYear].sort((a, b) =>
+      a.log_date.localeCompare(b.log_date)
+    );
+
+    const signoffMap: Record<string, MonthSignoff> = {};
+    (signoffRows || []).forEach((s: any) => {
+      signoffMap[s.month_key] = s;
+    });
+
+    setRows(mergedVisibleYear);
+    setAllLoadedRows(fullLoaded);
+    setSignoffs(signoffMap);
+    setLoading(false);
   }
 
   useEffect(() => {
-    void loadMonth(pilot, month);
-  }, [pilot, month]);
+    loadData(selectedPilot, selectedYear);
+  }, [selectedPilot, selectedYear]);
 
-  const derivedRows = useMemo(() => {
-    return buildDerivedRows(rows, allYearRows, month);
-  }, [rows, allYearRows, month]);
+  function isMonthLocked(monthKey: string) {
+    return !!signoffs[monthKey]?.locked;
+  }
+
+  function isRowLocked(row: DutyRow) {
+    return isMonthLocked(row.month_key);
+  }
+
+  const displayedRows = useMemo(() => {
+    if (selectedMonth === "ALL") return rows;
+    return rows.filter((r) => getMonthFromDate(r.log_date) === selectedMonth);
+  }, [rows, selectedMonth]);
+
+  const derivedByDate = useMemo(() => {
+    const map: Record<
+      string,
+      {
+        dutyMinutes: number | null;
+        dutyStatus: string;
+        restText: string;
+        restOk: boolean | null;
+        flight24Status: string;
+        dayCurrent: boolean;
+        nightCurrent: boolean;
+      }
+    > = {};
+
+    const sorted = [...allLoadedRows].sort((a, b) => a.log_date.localeCompare(b.log_date));
+
+    for (let i = 0; i < sorted.length; i++) {
+      const row = sorted[i];
+      const dutyMinutes = calcDutyMinutes(row.duty_in, row.duty_out);
+      const flightHours = parseFlightHours(row.flight_hours);
+      const flight24Status = flightHours > 8 ? "OVER 8.0" : "OK";
+
+      let restText = "";
+      let restOk: boolean | null = null;
+
+      if (i > 0 && row.duty_in !== "OFF") {
+        const prev = sorted[i - 1];
+
+        if (prev.duty_in === "OFF") {
+          restText = "24+";
+          restOk = true;
+        } else if (prev.duty_out) {
+          const prevOut = parseTimeToMinutes(prev.duty_out);
+          const currIn = parseTimeToMinutes(row.duty_in);
+
+          if (prevOut !== null && currIn !== null) {
+            let restMinutes = currIn - prevOut;
+            if (restMinutes < 0) restMinutes += 1440;
+
+            if (restMinutes >= 1440) {
+              restText = "24+";
+              restOk = true;
+            } else {
+              restText = minutesToHoursString(restMinutes);
+              restOk = restMinutes >= 600;
+            }
+          }
+        }
+      }
+
+      const start90 = addDays(row.log_date, -89);
+      const windowRows = sorted.filter(
+        (r) => r.log_date >= start90 && r.log_date <= row.log_date
+      );
+
+      const dayLanding90 = windowRows.reduce(
+        (sum, r) => sum + Number(r.day_landings || 0),
+        0
+      );
+      const nightLanding90 = windowRows.reduce(
+        (sum, r) => sum + Number(r.night_landings || 0),
+        0
+      );
+
+      const nightCurrent = nightLanding90 >= 3;
+      const dayCurrent = dayLanding90 >= 3 || nightCurrent;
+
+      if (row.log_date.startsWith(`${selectedYear}-`)) {
+        map[row.log_date] = {
+          dutyMinutes,
+          dutyStatus:
+            dutyMinutes === null ? "" : dutyMinutes > 14 * 60 ? "OVER 14" : "OK",
+          restText,
+          restOk,
+          flight24Status,
+          dayCurrent,
+          nightCurrent,
+        };
+      }
+    }
+
+    return map;
+  }, [allLoadedRows, selectedYear]);
 
   const totals = useMemo(() => {
-    return rows.reduce(
-      (acc, row) => {
-        acc.flight += parseNumber(row.flight_hours || '0');
-        acc.day += parseNumber(row.day_landings || '0');
-        acc.night += parseNumber(row.night_landings || '0');
-        return acc;
-      },
-      { flight: 0, day: 0, night: 0 }
-    );
-  }, [rows]);
+    const monthRows =
+      selectedMonth === "ALL"
+        ? []
+        : rows.filter((r) => getMonthFromDate(r.log_date) === selectedMonth);
 
-  function updateRow(day: number, field: keyof RowInput, value: string) {
+    const monthFlight = monthRows.reduce(
+      (sum, r) => sum + parseFlightHours(r.flight_hours),
+      0
+    );
+
+    const monthDayLandings = monthRows.reduce(
+      (sum, r) => sum + Number(r.day_landings || 0),
+      0
+    );
+
+    const monthNightLandings = monthRows.reduce(
+      (sum, r) => sum + Number(r.night_landings || 0),
+      0
+    );
+
+    let quarterFlight = 0;
+    let twoQuarterFlight = 0;
+
+    if (selectedMonth !== "ALL") {
+      const currentQuarter = getQuarterFromMonth(selectedMonth);
+      const previousQuarter = currentQuarter - 1;
+
+      quarterFlight = rows
+        .filter((r) => getQuarterFromDate(r.log_date) === currentQuarter)
+        .reduce((sum, r) => sum + parseFlightHours(r.flight_hours), 0);
+
+      twoQuarterFlight = rows
+        .filter((r) => {
+          const q = getQuarterFromDate(r.log_date);
+          return q === currentQuarter || q === previousQuarter;
+        })
+        .reduce((sum, r) => sum + parseFlightHours(r.flight_hours), 0);
+    }
+
+    const yearFlight = rows.reduce(
+      (sum, r) => sum + parseFlightHours(r.flight_hours),
+      0
+    );
+
+    return {
+      monthFlight,
+      monthDayLandings,
+      monthNightLandings,
+      quarterFlight,
+      twoQuarterFlight,
+      yearFlight,
+    };
+  }, [rows, selectedMonth]);
+
+  function updateRow(logDate: string, patch: Partial<DutyRow>) {
     setRows((prev) =>
       prev.map((row) => {
-        if (row.day !== day) return row;
+        if (row.log_date !== logDate) return row;
 
-        if (field === 'duty_in') {
-          const next = value.trim().toUpperCase() === 'OFF' ? 'OFF' : value;
-          return {
-            ...row,
-            duty_in: next,
-            duty_out: next === 'OFF' ? '' : row.duty_out,
-            flight_hours: next === 'OFF' ? '' : row.flight_hours,
-            day_landings: next === 'OFF' ? '' : row.day_landings,
-            night_landings: next === 'OFF' ? '' : row.night_landings,
-            exceedance_reason: next === 'OFF' ? '' : row.exceedance_reason,
-            approved_by: next === 'OFF' ? '' : row.approved_by,
-            approval_time: next === 'OFF' ? '' : row.approval_time,
-          };
+        const next = { ...row, ...patch };
+
+        if (patch.duty_in !== undefined) {
+          if (!patch.duty_in || patch.duty_in.toUpperCase() === "OFF") {
+            next.duty_in = "OFF";
+            next.duty_out = "";
+          } else {
+            next.duty_in = normalizeTimeInput(patch.duty_in);
+          }
         }
 
-        if (field === 'duty_out') {
-          return { ...row, duty_out: value };
+        if (patch.duty_out !== undefined) {
+          next.duty_out = patch.duty_out ? normalizeTimeInput(patch.duty_out) : "";
         }
 
-        return { ...row, [field]: value };
+        if (patch.flight_hours !== undefined) {
+          next.flight_hours = patch.flight_hours.replace(/[^\d.]/g, "");
+        }
+
+        if (patch.day_landings !== undefined) {
+          next.day_landings = Math.max(0, Number(patch.day_landings || 0));
+        }
+
+        if (patch.night_landings !== undefined) {
+          next.night_landings = Math.max(0, Number(patch.night_landings || 0));
+        }
+
+        const dutyMinutes = calcDutyMinutes(next.duty_in, next.duty_out);
+        if (dutyMinutes === null || dutyMinutes <= 14 * 60) {
+          next.exceedance_reason = "";
+          next.approved_by = "";
+          next.approval_time = "";
+        }
+
+        return next;
+      })
+    );
+
+    setAllLoadedRows((prev) =>
+      prev.map((row) => {
+        if (row.log_date !== logDate) return row;
+
+        const next = { ...row, ...patch };
+
+        if (patch.duty_in !== undefined) {
+          if (!patch.duty_in || patch.duty_in.toUpperCase() === "OFF") {
+            next.duty_in = "OFF";
+            next.duty_out = "";
+          } else {
+            next.duty_in = normalizeTimeInput(patch.duty_in);
+          }
+        }
+
+        if (patch.duty_out !== undefined) {
+          next.duty_out = patch.duty_out ? normalizeTimeInput(patch.duty_out) : "";
+        }
+
+        if (patch.flight_hours !== undefined) {
+          next.flight_hours = patch.flight_hours.replace(/[^\d.]/g, "");
+        }
+
+        if (patch.day_landings !== undefined) {
+          next.day_landings = Math.max(0, Number(patch.day_landings || 0));
+        }
+
+        if (patch.night_landings !== undefined) {
+          next.night_landings = Math.max(0, Number(patch.night_landings || 0));
+        }
+
+        const dutyMinutes = calcDutyMinutes(next.duty_in, next.duty_out);
+        if (dutyMinutes === null || dutyMinutes <= 14 * 60) {
+          next.exceedance_reason = "";
+          next.approved_by = "";
+          next.approval_time = "";
+        }
+
+        return next;
       })
     );
   }
 
-  async function saveRow(day: number) {
-    const row = rows.find((r) => r.day === day);
-    if (!row) return;
-    if (rowLocked(row, monthSigned)) return;
-
-    setSavingDay(day);
-    setMessage('');
+  async function saveChanges() {
+    setSaving(true);
+    setMessage("");
 
     try {
-      const payload = toDbRow(pilot, month, row);
+      const unlockedRows = rows.filter((row) => !isMonthLocked(row.month_key));
 
-      const { error } = await supabase.from('duty_logs_v2').upsert(payload, {
-        onConflict: 'pilot_name,log_date',
-      });
+      for (const row of unlockedRows) {
+        const payload = {
+          pilot_name: row.pilot_name,
+          log_date: row.log_date,
+          duty_in: row.duty_in || "OFF",
+          duty_out: row.duty_out || "",
+          flight_hours: row.flight_hours === "" ? null : parseFlightHours(row.flight_hours),
+          day_landings: Number(row.day_landings || 0),
+          night_landings: Number(row.night_landings || 0),
+          remarks: row.remarks || "",
+          exceedance_reason: row.exceedance_reason || "",
+          approved_by: row.approved_by || "",
+          approval_time: row.approved_by ? row.approval_time || "" : "",
+          month_key: row.month_key,
+        };
 
-      if (error) throw error;
+        if (row.id) {
+          const { error } = await supabase
+            .from("duty_logs_v2")
+            .update(payload)
+            .eq("id", row.id);
 
-      await loadMonth(pilot, month);
-      setMessage(`Saved day ${day}.`);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Unknown save error';
-      setMessage(`Save error: ${msg}`);
+          if (error) throw error;
+        } else if (isMeaningfulRow(row)) {
+          const { data, error } = await supabase
+            .from("duty_logs_v2")
+            .insert(payload)
+            .select()
+            .single();
+
+          if (error) throw error;
+
+          setRows((prev) =>
+            prev.map((r) => (r.log_date === row.log_date ? { ...r, id: data.id } : r))
+          );
+          setAllLoadedRows((prev) =>
+            prev.map((r) => (r.log_date === row.log_date ? { ...r, id: data.id } : r))
+          );
+        }
+      }
+
+      setMessage("Saved successfully.");
+      await loadData(selectedPilot, selectedYear);
+    } catch (err: any) {
+      setMessage(`Save error: ${err.message || "Unknown error"}`);
     } finally {
-      setSavingDay(null);
+      setSaving(false);
     }
   }
 
   async function signMonth() {
-    if (!signName.trim()) {
-      setMessage('Enter a signer name before signing the month.');
+    if (selectedMonth === "ALL") {
+      setMessage("Select a single month before signing.");
       return;
     }
 
-    setSigning(true);
-    setMessage('');
+    const monthKey = `${selectedYear}-${selectedMonth}`;
+    if (isMonthLocked(monthKey)) {
+      setMessage("That month is already locked.");
+      return;
+    }
+
+    const signedName = window.prompt("Type your name to sign this month:");
+    if (!signedName || !signedName.trim()) {
+      setMessage("Signing cancelled.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `By signing, ${selectedPilot} ${monthKey} will be locked. Continue?`
+    );
+    if (!confirmed) {
+      setMessage("Signing cancelled.");
+      return;
+    }
+
+    setSaving(true);
+    setMessage("");
 
     try {
-      const stamp = new Date().toISOString();
-      const payload = rows.map((row) => ({
-        ...toDbRow(pilot, month, row),
-        signed_at: stamp,
-        signed_by: signName.trim(),
-      }));
+      await saveChanges();
 
-      const { error } = await supabase.from('duty_logs_v2').upsert(payload, {
-        onConflict: 'pilot_name,log_date',
-      });
+      const existing = signoffs[monthKey];
+      const payload = {
+        pilot_name: selectedPilot,
+        month_key: monthKey,
+        signed_name: signedName.trim(),
+        signed_at: new Date().toISOString(),
+        locked: true,
+        certification_text: "I certify this monthly flight and duty log is accurate.",
+      };
 
-      if (error) throw error;
+      if (existing?.id) {
+        const { error } = await supabase
+          .from("month_signoffs")
+          .update(payload)
+          .eq("id", existing.id);
 
-      await loadMonth(pilot, month);
-      setMonthSigned(true);
-      setMessage(`Month signed by ${signName.trim()}.`);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Unknown sign error';
-      setMessage(`Sign error: ${msg}`);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("month_signoffs").insert(payload);
+        if (error) throw error;
+      }
+
+      setMessage(`Signed and locked ${monthKey}.`);
+      await loadData(selectedPilot, selectedYear);
+    } catch (err: any) {
+      setMessage(`Sign error: ${err.message || "Unknown error"}`);
     } finally {
-      setSigning(false);
+      setSaving(false);
     }
   }
 
   async function unlockMonth() {
-    setSigning(true);
-    setMessage('');
+    if (selectedMonth === "ALL") {
+      setMessage("Select a single month before unlocking.");
+      return;
+    }
+
+    const monthKey = `${selectedYear}-${selectedMonth}`;
+    const existing = signoffs[monthKey];
+
+    if (!existing?.locked) {
+      setMessage("That month is not locked.");
+      return;
+    }
+
+    const adminName = window.prompt("Type admin name to unlock this month:");
+    if (!adminName || !adminName.trim()) {
+      setMessage("Unlock cancelled.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Unlock ${selectedPilot} ${monthKey}? This will allow editing again.`
+    );
+    if (!confirmed) {
+      setMessage("Unlock cancelled.");
+      return;
+    }
+
+    setSaving(true);
+    setMessage("");
 
     try {
-      for (const row of rows) {
+      if (existing.id) {
         const { error } = await supabase
-          .from('duty_logs_v2')
-          .update({ signed_at: null, signed_by: null })
-          .eq('pilot_name', pilot)
-          .eq('log_date', row.log_date);
+          .from("month_signoffs")
+          .update({
+            locked: false,
+            certification_text: `Unlocked by ${adminName.trim()} on ${new Date().toLocaleString()}`,
+          })
+          .eq("id", existing.id);
 
         if (error) throw error;
       }
 
-      await loadMonth(pilot, month);
-      setMonthSigned(false);
-      setMessage('Month unlocked.');
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Unknown unlock error';
-      setMessage(`Unlock error: ${msg}`);
+      setMessage(`Unlocked ${monthKey}.`);
+      await loadData(selectedPilot, selectedYear);
+    } catch (err: any) {
+      setMessage(`Unlock error: ${err.message || "Unknown error"}`);
     } finally {
-      setSigning(false);
+      setSaving(false);
     }
   }
 
+  const selectedMonthKey =
+    selectedMonth === "ALL" ? "" : `${selectedYear}-${selectedMonth}`;
+  const selectedMonthLocked =
+    selectedMonth === "ALL" ? false : isMonthLocked(selectedMonthKey);
+
   return (
-    <main style={{ padding: 20, fontFamily: 'Arial, sans-serif' }}>
-      <h1 style={{ marginBottom: 8 }}>Flight &amp; Duty Log</h1>
-      <p style={{ marginTop: 0, color: '#555' }}>
-        Clean rebuild from spreadsheet. Year: {ACTIVE_YEAR}
-      </p>
+    <main className="min-h-screen bg-slate-100 p-4 md:p-6">
+      <div className="mx-auto max-w-7xl space-y-4">
+        <div className="rounded-2xl bg-white p-4 shadow">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">Flight & Duty Log</h1>
+              <p className="text-sm text-slate-600">Table: duty_logs_v2</p>
+            </div>
 
-      <div
-        style={{
-          display: 'flex',
-          gap: 12,
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          marginBottom: 16,
-          padding: 12,
-          border: '1px solid #ccc',
-          borderRadius: 8,
-          background: '#f7f7f7',
-        }}
-      >
-        <label>
-          Pilot
-          <br />
-          <select value={pilot} onChange={(e) => setPilot(e.target.value as PilotName)}>
-            {PILOTS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        </label>
+            <div className="flex flex-wrap gap-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  Pilot
+                </label>
+                <select
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2"
+                  value={selectedPilot}
+                  onChange={(e) => setSelectedPilot(e.target.value)}
+                >
+                  {PILOTS.map((pilot) => (
+                    <option key={pilot} value={pilot}>
+                      {pilot}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-        <label>
-          Month
-          <br />
-          <select value={month} onChange={(e) => setMonth(e.target.value as MonthKey)}>
-            {MONTHS.map((m) => (
-              <option key={m.key} value={m.key}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </label>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  Year
+                </label>
+                <select
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2"
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(Number(e.target.value))}
+                >
+                  {YEAR_OPTIONS.map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-        <label>
-          Signer Name
-          <br />
-          <input
-            value={signName}
-            onChange={(e) => setSignName(e.target.value)}
-            placeholder="Name for sign-off"
-            disabled={monthSigned}
-          />
-        </label>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  Month
+                </label>
+                <select
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2"
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                >
+                  {MONTHS.map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-        <button onClick={signMonth} disabled={loading || signing || monthSigned}>
-          {signing ? 'Signing...' : 'Sign Month'}
-        </button>
+              <button
+                className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                onClick={saveChanges}
+                disabled={loading || saving}
+              >
+                {saving ? "Saving..." : "Save"}
+              </button>
 
-        <button onClick={unlockMonth} disabled={loading || signing || !monthSigned}>
-          {signing ? 'Working...' : 'Unlock Month'}
-        </button>
+              <button
+                className="rounded-lg bg-green-600 px-4 py-2 font-semibold text-white hover:bg-green-700 disabled:opacity-50"
+                onClick={signMonth}
+                disabled={loading || saving || selectedMonth === "ALL" || selectedMonthLocked}
+              >
+                Sign Month
+              </button>
 
-        <button onClick={() => window.print()} disabled={loading}>
-          Print / PDF
-        </button>
+              <button
+                className="rounded-lg bg-amber-600 px-4 py-2 font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+                onClick={unlockMonth}
+                disabled={loading || saving || selectedMonth === "ALL" || !selectedMonthLocked}
+              >
+                Unlock Month
+              </button>
+            </div>
+          </div>
 
-        <div style={{ marginLeft: 'auto', fontWeight: 700 }}>
-          {monthSigned ? 'SIGNED / LOCKED' : 'UNSIGNED / EDITABLE'}
+          <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+            {selectedMonth !== "ALL" && (
+              <span
+                className={`rounded-full px-3 py-1 font-semibold ${
+                  selectedMonthLocked
+                    ? "bg-red-100 text-red-700"
+                    : "bg-green-100 text-green-700"
+                }`}
+              >
+                {selectedMonthLocked ? "Month Locked" : "Month Unlocked"}
+              </span>
+            )}
+
+            {message && (
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-700">
+                {message}
+              </span>
+            )}
+          </div>
         </div>
-      </div>
 
-      {message && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: 10,
-            background: '#eef4ff',
-            border: '1px solid #c9dafc',
-            borderRadius: 6,
-          }}
-        >
-          {message}
+        <div className="grid gap-4 md:grid-cols-5">
+          <div className="rounded-2xl bg-white p-4 shadow">
+            <div className="text-sm text-slate-500">Monthly Flight</div>
+            <div className="text-2xl font-bold text-slate-900">
+              {selectedMonth === "ALL" ? "-" : formatFlightHours(totals.monthFlight)}
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-white p-4 shadow">
+            <div className="text-sm text-slate-500">Monthly Day Landings</div>
+            <div className="text-2xl font-bold text-slate-900">
+              {selectedMonth === "ALL" ? "-" : totals.monthDayLandings}
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-white p-4 shadow">
+            <div className="text-sm text-slate-500">Monthly Night Landings</div>
+            <div className="text-2xl font-bold text-slate-900">
+              {selectedMonth === "ALL" ? "-" : totals.monthNightLandings}
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-white p-4 shadow">
+            <div className="text-sm text-slate-500">Quarter Flight</div>
+            <div className="text-2xl font-bold text-slate-900">
+              {selectedMonth === "ALL" ? "-" : formatFlightHours(totals.quarterFlight)}
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-white p-4 shadow">
+            <div className="text-sm text-slate-500">2-Quarter Flight</div>
+            <div className="text-2xl font-bold text-slate-900">
+              {selectedMonth === "ALL" ? "-" : formatFlightHours(totals.twoQuarterFlight)}
+            </div>
+          </div>
         </div>
-      )}
 
-      {loading ? (
-        <p>Loading…</p>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ borderCollapse: 'collapse', minWidth: 2200, width: '100%' }}>
-            <thead>
+        <div className="rounded-2xl bg-white p-4 shadow">
+          <div className="text-sm text-slate-500">Year Flight Total</div>
+          <div className="text-3xl font-bold text-slate-900">
+            {formatFlightHours(totals.yearFlight)}
+          </div>
+        </div>
+
+        <div className="overflow-x-auto rounded-2xl bg-white shadow">
+          <table className="min-w-full border-collapse text-sm">
+            <thead className="bg-slate-200 text-slate-800">
               <tr>
-                {[
-                  'Day',
-                  'Date',
-                  'Duty In',
-                  'Duty Out',
-                  'Duty Hours',
-                  'Flight Hours',
-                  '24h Flight Status',
-                  '24hr Rest',
-                  'Day Landings',
-                  'Night Landings',
-                  'Day Currency',
-                  'Night Currency',
-                  'Month Running Total',
-                  'Quarter Hours',
-                  '2Q Hours',
-                  'Year Hours',
-                  'Quarter Rest Days',
-                  'Duty Exceedance',
-                  'Exceedance Reason',
-                  'Approved By',
-                  'Approval Time',
-                  'Remarks',
-                  'Save',
-                ].map((head) => (
-                  <th
-                    key={head}
-                    style={{
-                      border: '1px solid #999',
-                      padding: 6,
-                      background: '#dedede',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {head}
-                  </th>
-                ))}
+                <th className="border px-2 py-2 text-left">Date</th>
+                <th className="border px-2 py-2 text-left">Duty In</th>
+                <th className="border px-2 py-2 text-left">Duty Out</th>
+                <th className="border px-2 py-2 text-left">Duty Hrs</th>
+                <th className="border px-2 py-2 text-left">Rest</th>
+                <th className="border px-2 py-2 text-left">Flight Hrs</th>
+                <th className="border px-2 py-2 text-left">24h Flight</th>
+                <th className="border px-2 py-2 text-left">Day Ldg</th>
+                <th className="border px-2 py-2 text-left">Night Ldg</th>
+                <th className="border px-2 py-2 text-left">Day Current</th>
+                <th className="border px-2 py-2 text-left">Night Current</th>
+                <th className="border px-2 py-2 text-left">Remarks</th>
+                <th className="border px-2 py-2 text-left">Exceedance Reason</th>
+                <th className="border px-2 py-2 text-left">Approved By</th>
+                <th className="border px-2 py-2 text-left">Approval Time</th>
               </tr>
             </thead>
 
             <tbody>
-              {rows.map((row, index) => {
-                const calc = derivedRows[index];
-                const locked = rowLocked(row, monthSigned);
-                const restBad =
-                  calc.rest_24h !== '' &&
-                  calc.rest_24h !== '24+' &&
-                  parseNumber(calc.rest_24h) < 10;
-                const dutyBad = calc.duty_exceedance;
-                const flightBad = calc.flight_status_24h !== 'OK';
-                const dayCurrentBad = calc.day_currency === 'NOT CURRENT';
-                const nightCurrentBad = calc.night_currency === 'NOT CURRENT';
+              {loading ? (
+                <tr>
+                  <td className="border px-3 py-4 text-center" colSpan={15}>
+                    Loading...
+                  </td>
+                </tr>
+              ) : (
+                displayedRows.map((row) => {
+                  const d = derivedByDate[row.log_date];
+                  const dutyOver14 = (d?.dutyMinutes || 0) > 14 * 60;
+                  const rowLocked = isRowLocked(row);
 
-                return (
-                  <tr key={row.day}>
-                    <td style={{ border: '1px solid #999', padding: 4 }}>{row.day}</td>
-                    <td style={{ border: '1px solid #999', padding: 4 }}>{row.log_date}</td>
+                  return (
+                    <tr key={row.log_date} className="odd:bg-white even:bg-slate-50">
+                      <td className="border px-2 py-2 whitespace-nowrap font-medium">
+                        {prettyDate(row.log_date)}
+                      </td>
 
-                    <td style={{ border: '1px solid #999', padding: 4 }}>
-                      <input
-                        value={row.duty_in}
-                        onChange={(e) => updateRow(row.day, 'duty_in', e.target.value)}
-                        disabled={locked}
-                        style={{ width: 70 }}
-                      />
-                    </td>
+                      <td className="border px-2 py-2">
+                        <input
+                          className="w-20 rounded border px-2 py-1"
+                          value={row.duty_in}
+                          disabled={rowLocked}
+                          onChange={(e) =>
+                            updateRow(row.log_date, {
+                              duty_in:
+                                e.target.value.toUpperCase() === "OFF"
+                                  ? "OFF"
+                                  : e.target.value,
+                            })
+                          }
+                        />
+                      </td>
 
-                    <td style={{ border: '1px solid #999', padding: 4 }}>
-                      <input
-                        value={row.duty_out}
-                        onChange={(e) => updateRow(row.day, 'duty_out', e.target.value)}
-                        disabled={locked || row.duty_in.trim().toUpperCase() === 'OFF'}
-                        style={{ width: 70 }}
-                      />
-                    </td>
+                      <td className="border px-2 py-2">
+                        <input
+                          className="w-20 rounded border px-2 py-1"
+                          value={row.duty_out}
+                          disabled={rowLocked || row.duty_in === "OFF"}
+                          onChange={(e) =>
+                            updateRow(row.log_date, { duty_out: e.target.value })
+                          }
+                        />
+                      </td>
 
-                    <td
-                      style={{
-                        border: '1px solid #999',
-                        padding: 4,
-                        textAlign: 'center',
-                        background: dutyBad ? '#ffd6d6' : '#dff5df',
-                      }}
-                    >
-                      {calc.duty_hours}
-                    </td>
-
-                    <td style={{ border: '1px solid #999', padding: 4 }}>
-                      <input
-                        value={row.flight_hours}
-                        onChange={(e) => updateRow(row.day, 'flight_hours', e.target.value)}
-                        disabled={locked || row.duty_in.trim().toUpperCase() === 'OFF'}
-                        style={{ width: 70 }}
-                      />
-                    </td>
-
-                    <td
-                      style={{
-                        border: '1px solid #999',
-                        padding: 4,
-                        textAlign: 'center',
-                        background: flightBad ? '#ffd6d6' : '#dff5df',
-                      }}
-                    >
-                      {calc.flight_status_24h}
-                    </td>
-
-                    <td
-                      style={{
-                        border: '1px solid #999',
-                        padding: 4,
-                        textAlign: 'center',
-                        background: restBad ? '#ffd6d6' : '#dff5df',
-                      }}
-                    >
-                      {calc.rest_24h}
-                    </td>
-
-                    <td style={{ border: '1px solid #999', padding: 4 }}>
-                      <input
-                        value={row.day_landings}
-                        onChange={(e) => updateRow(row.day, 'day_landings', e.target.value)}
-                        disabled={locked || row.duty_in.trim().toUpperCase() === 'OFF'}
-                        style={{ width: 60 }}
-                      />
-                    </td>
-
-                    <td style={{ border: '1px solid #999', padding: 4 }}>
-                      <input
-                        value={row.night_landings}
-                        onChange={(e) => updateRow(row.day, 'night_landings', e.target.value)}
-                        disabled={locked || row.duty_in.trim().toUpperCase() === 'OFF'}
-                        style={{ width: 60 }}
-                      />
-                    </td>
-
-                    <td
-                      style={{
-                        border: '1px solid #999',
-                        padding: 4,
-                        textAlign: 'center',
-                        background: dayCurrentBad ? '#ffd6d6' : '#dff5df',
-                      }}
-                    >
-                      {calc.day_currency}
-                    </td>
-
-                    <td
-                      style={{
-                        border: '1px solid #999',
-                        padding: 4,
-                        textAlign: 'center',
-                        background: nightCurrentBad ? '#ffd6d6' : '#dff5df',
-                      }}
-                    >
-                      {calc.night_currency}
-                    </td>
-
-                    <td style={{ border: '1px solid #999', padding: 4, textAlign: 'center' }}>
-                      {calc.month_running_total}
-                    </td>
-
-                    <td style={{ border: '1px solid #999', padding: 4, textAlign: 'center' }}>
-                      {calc.quarter_hours}
-                    </td>
-
-                    <td style={{ border: '1px solid #999', padding: 4, textAlign: 'center' }}>
-                      {calc.two_quarter_hours}
-                    </td>
-
-                    <td style={{ border: '1px solid #999', padding: 4, textAlign: 'center' }}>
-                      {calc.year_hours}
-                    </td>
-
-                    <td style={{ border: '1px solid #999', padding: 4, textAlign: 'center' }}>
-                      {calc.quarter_rest_days}
-                    </td>
-
-                    <td
-                      style={{
-                        border: '1px solid #999',
-                        padding: 4,
-                        textAlign: 'center',
-                        background: dutyBad ? '#ffd6d6' : '#dff5df',
-                      }}
-                    >
-                      {dutyBad ? 'YES' : ''}
-                    </td>
-
-                    <td style={{ border: '1px solid #999', padding: 4 }}>
-                      <input
-                        value={row.exceedance_reason}
-                        onChange={(e) => updateRow(row.day, 'exceedance_reason', e.target.value)}
-                        disabled={locked || row.duty_in.trim().toUpperCase() === 'OFF'}
-                        style={{ width: 180 }}
-                      />
-                    </td>
-
-                    <td style={{ border: '1px solid #999', padding: 4 }}>
-                      <input
-                        value={row.approved_by}
-                        onChange={(e) => updateRow(row.day, 'approved_by', e.target.value)}
-                        disabled={locked || row.duty_in.trim().toUpperCase() === 'OFF'}
-                        style={{ width: 120 }}
-                      />
-                    </td>
-
-                    <td style={{ border: '1px solid #999', padding: 4 }}>
-                      <input
-                        value={row.approval_time}
-                        onChange={(e) => updateRow(row.day, 'approval_time', e.target.value)}
-                        disabled={locked || row.duty_in.trim().toUpperCase() === 'OFF'}
-                        style={{ width: 120 }}
-                        placeholder="HH:MM or note"
-                      />
-                    </td>
-
-                    <td style={{ border: '1px solid #999', padding: 4 }}>
-                      <input
-                        value={row.remarks}
-                        onChange={(e) => updateRow(row.day, 'remarks', e.target.value)}
-                        disabled={locked}
-                        style={{ width: 220 }}
-                      />
-                    </td>
-
-                    <td style={{ border: '1px solid #999', padding: 4 }}>
-                      <button
-                        onClick={() => saveRow(row.day)}
-                        disabled={locked || savingDay === row.day}
+                      <td
+                        className={`border px-2 py-2 font-semibold ${
+                          d?.dutyMinutes === null
+                            ? ""
+                            : dutyOver14
+                            ? "bg-red-100 text-red-700"
+                            : "bg-green-100 text-green-700"
+                        }`}
                       >
-                        {savingDay === row.day ? 'Saving...' : 'Save'}
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
+                        {d?.dutyMinutes === null ? "" : minutesToHoursString(d.dutyMinutes)}
+                      </td>
 
-            <tfoot>
-              <tr>
-                <td colSpan={5} style={{ border: '1px solid #999', padding: 6, fontWeight: 700 }}>
-                  Totals for {monthLabel(month)}
-                </td>
-                <td style={{ border: '1px solid #999', padding: 6, fontWeight: 700 }}>
-                  {totals.flight.toFixed(2)}
-                </td>
-                <td colSpan={2} style={{ border: '1px solid #999', padding: 6 }} />
-                <td style={{ border: '1px solid #999', padding: 6, fontWeight: 700 }}>
-                  {totals.day}
-                </td>
-                <td style={{ border: '1px solid #999', padding: 6, fontWeight: 700 }}>
-                  {totals.night}
-                </td>
-                <td colSpan={13} style={{ border: '1px solid #999', padding: 6 }} />
-              </tr>
-            </tfoot>
+                      <td
+                        className={`border px-2 py-2 font-semibold ${
+                          d?.restOk === null
+                            ? ""
+                            : d.restOk
+                            ? "bg-green-100 text-green-700"
+                            : "bg-red-100 text-red-700"
+                        }`}
+                      >
+                        {d?.restText || ""}
+                      </td>
+
+                      <td className="border px-2 py-2">
+                        <input
+                          className="w-20 rounded border px-2 py-1"
+                          value={row.flight_hours}
+                          disabled={rowLocked}
+                          onChange={(e) =>
+                            updateRow(row.log_date, { flight_hours: e.target.value })
+                          }
+                        />
+                      </td>
+
+                      <td
+                        className={`border px-2 py-2 font-semibold ${
+                          d?.flight24Status === "OVER 8.0"
+                            ? "bg-red-100 text-red-700"
+                            : "bg-green-100 text-green-700"
+                        }`}
+                      >
+                        {d?.flight24Status || "OK"}
+                      </td>
+
+                      <td className="border px-2 py-2">
+                        <input
+                          type="number"
+                          min={0}
+                          className="w-16 rounded border px-2 py-1"
+                          value={row.day_landings}
+                          disabled={rowLocked}
+                          onChange={(e) =>
+                            updateRow(row.log_date, {
+                              day_landings: Number(e.target.value || 0),
+                            })
+                          }
+                        />
+                      </td>
+
+                      <td className="border px-2 py-2">
+                        <input
+                          type="number"
+                          min={0}
+                          className="w-16 rounded border px-2 py-1"
+                          value={row.night_landings}
+                          disabled={rowLocked}
+                          onChange={(e) =>
+                            updateRow(row.log_date, {
+                              night_landings: Number(e.target.value || 0),
+                            })
+                          }
+                        />
+                      </td>
+
+                      <td
+                        className={`border px-2 py-2 font-semibold ${
+                          d?.dayCurrent
+                            ? "bg-green-100 text-green-700"
+                            : "bg-red-100 text-red-700"
+                        }`}
+                      >
+                        {d?.dayCurrent ? "CURRENT" : "NOT CURRENT"}
+                      </td>
+
+                      <td
+                        className={`border px-2 py-2 font-semibold ${
+                          d?.nightCurrent
+                            ? "bg-green-100 text-green-700"
+                            : "bg-red-100 text-red-700"
+                        }`}
+                      >
+                        {d?.nightCurrent ? "CURRENT" : "NOT CURRENT"}
+                      </td>
+
+                      <td className="border px-2 py-2">
+                        <input
+                          className="w-56 rounded border px-2 py-1"
+                          value={row.remarks}
+                          disabled={rowLocked}
+                          onChange={(e) =>
+                            updateRow(row.log_date, { remarks: e.target.value })
+                          }
+                        />
+                      </td>
+
+                      <td className="border px-2 py-2">
+                        <input
+                          className="w-56 rounded border px-2 py-1"
+                          value={row.exceedance_reason}
+                          disabled={rowLocked || !dutyOver14}
+                          onChange={(e) =>
+                            updateRow(row.log_date, {
+                              exceedance_reason: e.target.value,
+                            })
+                          }
+                        />
+                      </td>
+
+                      <td className="border px-2 py-2">
+                        <input
+                          className="w-36 rounded border px-2 py-1"
+                          value={row.approved_by}
+                          disabled={rowLocked || !dutyOver14}
+                          onChange={(e) =>
+                            updateRow(row.log_date, { approved_by: e.target.value })
+                          }
+                        />
+                      </td>
+
+                      <td className="border px-2 py-2">
+                        <input
+                          className="w-24 rounded border px-2 py-1"
+                          value={row.approval_time}
+                          disabled={rowLocked || !dutyOver14}
+                          onChange={(e) =>
+                            updateRow(row.log_date, { approval_time: e.target.value })
+                          }
+                        />
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
           </table>
         </div>
-      )}
+      </div>
     </main>
   );
 }
