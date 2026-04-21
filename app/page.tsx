@@ -96,8 +96,17 @@ function buildYearRows(year: number, pilot: string): DutyRow[] {
   return rows;
 }
 
-function normalizeTimeInput(value: string) {
-  const raw = value.trim().toUpperCase();
+function sanitizeTimeTyping(value: string) {
+  const upper = value.toUpperCase().trim();
+
+  if (!upper) return "";
+  if (upper === "OFF") return "OFF";
+
+  return upper.replace(/\D/g, "").slice(0, 4);
+}
+
+function normalizeTimeValue(value: string) {
+  const raw = value.toUpperCase().trim();
 
   if (!raw) return "";
   if (raw === "OFF") return "OFF";
@@ -124,9 +133,7 @@ function normalizeTimeInput(value: string) {
 }
 
 function parseTimeToMinutes(value: string) {
-  if (!value || value.toUpperCase() === "OFF") return null;
-
-  const normalized = normalizeTimeInput(value);
+  const normalized = normalizeTimeValue(value);
   if (!normalized || normalized === "OFF") return null;
 
   const hh = Number(normalized.slice(0, 2));
@@ -144,8 +151,6 @@ function minutesToHoursString(minutes: number) {
 }
 
 function calcDutyMinutes(dutyIn: string, dutyOut: string) {
-  if (!dutyIn || dutyIn.toUpperCase() === "OFF" || !dutyOut) return null;
-
   const start = parseTimeToMinutes(dutyIn);
   const end = parseTimeToMinutes(dutyOut);
 
@@ -227,7 +232,6 @@ export default function Page() {
     setMessage("");
 
     const visibleYearRows = buildYearRows(year, pilot);
-
     const queryStart = `${year - 1}-10-01`;
     const queryEnd = `${year}-12-31`;
 
@@ -313,6 +317,90 @@ export default function Page() {
     return isMonthLocked(row.month_key);
   }
 
+  function applyBusinessRules(row: DutyRow): DutyRow {
+    const next = { ...row };
+
+    if (next.duty_in.toUpperCase() === "OFF") {
+      next.duty_in = "OFF";
+      next.duty_out = "";
+    }
+
+    const dutyMinutes = calcDutyMinutes(next.duty_in, next.duty_out);
+    if (dutyMinutes === null || dutyMinutes <= 14 * 60) {
+      next.exceedance_reason = "";
+      next.approved_by = "";
+      next.approval_time = "";
+    }
+
+    return next;
+  }
+
+  function updateRow(logDate: string, patch: Partial<DutyRow>) {
+    setRows((prev) =>
+      prev.map((row) => {
+        if (row.log_date !== logDate) return row;
+
+        const next = { ...row, ...patch };
+
+        if (patch.flight_hours !== undefined) {
+          next.flight_hours = patch.flight_hours.replace(/[^\d.]/g, "");
+        }
+
+        if (patch.day_landings !== undefined) {
+          next.day_landings = Math.max(0, Number(patch.day_landings || 0));
+        }
+
+        if (patch.night_landings !== undefined) {
+          next.night_landings = Math.max(0, Number(patch.night_landings || 0));
+        }
+
+        return applyBusinessRules(next);
+      })
+    );
+
+    setAllLoadedRows((prev) =>
+      prev.map((row) => {
+        if (row.log_date !== logDate) return row;
+
+        const next = { ...row, ...patch };
+
+        if (patch.flight_hours !== undefined) {
+          next.flight_hours = patch.flight_hours.replace(/[^\d.]/g, "");
+        }
+
+        if (patch.day_landings !== undefined) {
+          next.day_landings = Math.max(0, Number(patch.day_landings || 0));
+        }
+
+        if (patch.night_landings !== undefined) {
+          next.night_landings = Math.max(0, Number(patch.night_landings || 0));
+        }
+
+        return applyBusinessRules(next);
+      })
+    );
+  }
+
+  function normalizeTimeField(logDate: string, field: "duty_in" | "duty_out" | "approval_time") {
+    const target = rows.find((r) => r.log_date === logDate);
+    if (!target) return;
+
+    const currentValue = target[field] ?? "";
+    const normalized = normalizeTimeValue(currentValue);
+
+    if (field === "duty_in") {
+      updateRow(logDate, { duty_in: normalized || "OFF" });
+      return;
+    }
+
+    if (field === "duty_out") {
+      updateRow(logDate, { duty_out: normalized });
+      return;
+    }
+
+    updateRow(logDate, { approval_time: normalized });
+  }
+
   const displayedRows = useMemo(() => {
     if (selectedMonth === "ALL") return rows;
     return rows.filter((r) => getMonthFromDate(r.log_date) === selectedMonth);
@@ -336,17 +424,16 @@ export default function Page() {
     for (let i = 0; i < sorted.length; i++) {
       const row = sorted[i];
       const dutyMinutes = calcDutyMinutes(row.duty_in, row.duty_out);
-
       const flightHours = parseFlightHours(row.flight_hours);
       const flight24Status = flightHours > 8 ? "OVER 8.0" : "OK";
 
       let restText = "";
       let restOk: boolean | null = null;
 
-      if (i > 0 && row.duty_in !== "OFF") {
+      if (i > 0 && normalizeTimeValue(row.duty_in) !== "OFF") {
         const prev = sorted[i - 1];
 
-        if (prev.duty_in === "OFF") {
+        if (normalizeTimeValue(prev.duty_in) === "OFF") {
           restText = "24+";
           restOk = true;
         } else if (prev.duty_out) {
@@ -456,54 +543,6 @@ export default function Page() {
     };
   }, [rows, selectedMonth]);
 
-  function updateRow(logDate: string, patch: Partial<DutyRow>) {
-    const normalizePatchedRow = (row: DutyRow): DutyRow => {
-      const next = { ...row, ...patch };
-
-      if (patch.duty_in !== undefined) {
-        const normalized = normalizeTimeInput(patch.duty_in);
-        if (!normalized || normalized === "OFF") {
-          next.duty_in = "OFF";
-          next.duty_out = "";
-        } else {
-          next.duty_in = normalized;
-        }
-      }
-
-      if (patch.duty_out !== undefined) {
-        const normalized = normalizeTimeInput(patch.duty_out);
-        next.duty_out = normalized === "OFF" ? "" : normalized;
-      }
-
-      if (patch.flight_hours !== undefined) {
-        next.flight_hours = patch.flight_hours.replace(/[^\d.]/g, "");
-      }
-
-      if (patch.day_landings !== undefined) {
-        next.day_landings = Math.max(0, Number(patch.day_landings || 0));
-      }
-
-      if (patch.night_landings !== undefined) {
-        next.night_landings = Math.max(0, Number(patch.night_landings || 0));
-      }
-
-      const dutyMinutes = calcDutyMinutes(next.duty_in, next.duty_out);
-      if (dutyMinutes === null || dutyMinutes <= 14 * 60) {
-        next.exceedance_reason = "";
-        next.approved_by = "";
-        next.approval_time = "";
-      }
-
-      return next;
-    };
-
-    setRows((prev) => prev.map((row) => (row.log_date === logDate ? normalizePatchedRow(row) : row)));
-
-    setAllLoadedRows((prev) =>
-      prev.map((row) => (row.log_date === logDate ? normalizePatchedRow(row) : row))
-    );
-  }
-
   async function saveChanges() {
     setSaving(true);
     setMessage("");
@@ -512,19 +551,30 @@ export default function Page() {
       const unlockedRows = rows.filter((row) => !isMonthLocked(row.month_key));
 
       for (const row of unlockedRows) {
+        const normalizedDutyIn = normalizeTimeValue(row.duty_in) || "OFF";
+        const normalizedDutyOut = normalizeTimeValue(row.duty_out);
+        const normalizedApprovalTime = normalizeTimeValue(row.approval_time);
+
+        const prepared: DutyRow = applyBusinessRules({
+          ...row,
+          duty_in: normalizedDutyIn,
+          duty_out: normalizedDutyOut === "OFF" ? "" : normalizedDutyOut,
+          approval_time: normalizedApprovalTime === "OFF" ? "" : normalizedApprovalTime,
+        });
+
         const payload = {
-          pilot_name: row.pilot_name,
-          log_date: row.log_date,
-          duty_in: row.duty_in || "OFF",
-          duty_out: row.duty_out || "",
-          flight_hours: row.flight_hours === "" ? null : parseFlightHours(row.flight_hours),
-          day_landings: Number(row.day_landings || 0),
-          night_landings: Number(row.night_landings || 0),
-          remarks: row.remarks || "",
-          exceedance_reason: row.exceedance_reason || "",
-          approved_by: row.approved_by || "",
-          approval_time: row.approved_by ? row.approval_time || "" : "",
-          month_key: row.month_key,
+          pilot_name: prepared.pilot_name,
+          log_date: prepared.log_date,
+          duty_in: prepared.duty_in || "OFF",
+          duty_out: prepared.duty_out || "",
+          flight_hours: prepared.flight_hours === "" ? null : parseFlightHours(prepared.flight_hours),
+          day_landings: Number(prepared.day_landings || 0),
+          night_landings: Number(prepared.night_landings || 0),
+          remarks: prepared.remarks || "",
+          exceedance_reason: prepared.exceedance_reason || "",
+          approved_by: prepared.approved_by || "",
+          approval_time: prepared.approved_by ? prepared.approval_time || "" : "",
+          month_key: prepared.month_key,
         };
 
         if (row.id) {
@@ -534,7 +584,7 @@ export default function Page() {
             .eq("id", row.id);
 
           if (error) throw error;
-        } else if (isMeaningfulRow(row)) {
+        } else if (isMeaningfulRow(prepared)) {
           const { data, error } = await supabase
             .from("duty_logs_v2")
             .insert(payload)
@@ -544,11 +594,11 @@ export default function Page() {
           if (error) throw error;
 
           setRows((prev) =>
-            prev.map((r) => (r.log_date === row.log_date ? { ...r, id: data.id } : r))
+            prev.map((r) => (r.log_date === row.log_date ? { ...prepared, id: data.id } : r))
           );
 
           setAllLoadedRows((prev) =>
-            prev.map((r) => (r.log_date === row.log_date ? { ...r, id: data.id } : r))
+            prev.map((r) => (r.log_date === row.log_date ? { ...prepared, id: data.id } : r))
           );
         }
       }
@@ -889,11 +939,10 @@ export default function Page() {
                           disabled={rowLocked}
                           onChange={(e) =>
                             updateRow(row.log_date, {
-                              duty_in: e.target.value.toUpperCase() === "OFF"
-                                ? "OFF"
-                                : e.target.value,
+                              duty_in: sanitizeTimeTyping(e.target.value),
                             })
                           }
+                          onBlur={() => normalizeTimeField(row.log_date, "duty_in")}
                         />
                       </td>
 
@@ -902,10 +951,13 @@ export default function Page() {
                           className="w-20 rounded border px-2 py-1 font-mono"
                           maxLength={4}
                           value={row.duty_out}
-                          disabled={rowLocked || row.duty_in === "OFF"}
+                          disabled={rowLocked || normalizeTimeValue(row.duty_in) === "OFF"}
                           onChange={(e) =>
-                            updateRow(row.log_date, { duty_out: e.target.value })
+                            updateRow(row.log_date, {
+                              duty_out: sanitizeTimeTyping(e.target.value),
+                            })
                           }
+                          onBlur={() => normalizeTimeField(row.log_date, "duty_out")}
                         />
                       </td>
 
@@ -1042,11 +1094,15 @@ export default function Page() {
                       <td className="border px-2 py-2">
                         <input
                           className="w-24 rounded border px-2 py-1 font-mono"
+                          maxLength={4}
                           value={row.approval_time}
                           disabled={rowLocked || !dutyOver14}
                           onChange={(e) =>
-                            updateRow(row.log_date, { approval_time: e.target.value })
+                            updateRow(row.log_date, {
+                              approval_time: sanitizeTimeTyping(e.target.value),
+                            })
                           }
+                          onBlur={() => normalizeTimeField(row.log_date, "approval_time")}
                         />
                       </td>
                     </tr>
