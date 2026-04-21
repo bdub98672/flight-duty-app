@@ -9,6 +9,8 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const PILOTS = ["Reyna", "Clark", "Millea", "Walsh"];
+const THIS_YEAR = new Date().getFullYear();
+const YEAR_OPTIONS = [THIS_YEAR - 1, THIS_YEAR, THIS_YEAR + 1, THIS_YEAR + 2];
 
 const MONTHS = [
   { value: "ALL", label: "All" },
@@ -66,10 +68,13 @@ function daysInMonth(year: number, month: number) {
 
 function buildYearRows(year: number, pilot: string): DutyRow[] {
   const rows: DutyRow[] = [];
+
   for (let month = 1; month <= 12; month++) {
     const count = daysInMonth(year, month);
+
     for (let day = 1; day <= count; day++) {
       const log_date = makeDateString(year, month, day);
+
       rows.push({
         id: null,
         pilot_name: pilot,
@@ -87,38 +92,48 @@ function buildYearRows(year: number, pilot: string): DutyRow[] {
       });
     }
   }
+
   return rows;
 }
 
 function normalizeTimeInput(value: string) {
-  const raw = value.replace(/[^\d:]/g, "").trim();
-  if (!raw) return "";
+  const raw = value.trim().toUpperCase();
 
-  if (raw.includes(":")) {
-    const [h = "", m = ""] = raw.split(":");
-    const hh = Math.min(23, Math.max(0, Number(h || "0")));
-    const mm = Math.min(59, Math.max(0, Number(m || "0")));
-    return `${pad(hh)}:${pad(mm)}`;
-  }
+  if (!raw) return "";
+  if (raw === "OFF") return "OFF";
 
   const digits = raw.replace(/\D/g, "");
-  if (digits.length <= 2) {
-    const hh = Math.min(23, Math.max(0, Number(digits || "0")));
-    return `${pad(hh)}:00`;
+  if (!digits) return "";
+
+  let formatted = "";
+
+  if (digits.length === 1 || digits.length === 2) {
+    formatted = `${digits.padStart(2, "0")}00`;
+  } else if (digits.length === 3) {
+    formatted = `0${digits}`;
+  } else {
+    formatted = digits.slice(0, 4);
   }
 
-  const h = digits.slice(0, digits.length - 2);
-  const m = digits.slice(-2);
-  const hh = Math.min(23, Math.max(0, Number(h || "0")));
-  const mm = Math.min(59, Math.max(0, Number(m || "0")));
-  return `${pad(hh)}:${pad(mm)}`;
+  const hh = Number(formatted.slice(0, 2));
+  const mm = Number(formatted.slice(2, 4));
+
+  if (hh > 23 || mm > 59) return "";
+
+  return formatted;
 }
 
 function parseTimeToMinutes(value: string) {
   if (!value || value.toUpperCase() === "OFF") return null;
+
   const normalized = normalizeTimeInput(value);
-  const [hh, mm] = normalized.split(":").map(Number);
+  if (!normalized || normalized === "OFF") return null;
+
+  const hh = Number(normalized.slice(0, 2));
+  const mm = Number(normalized.slice(2, 4));
+
   if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
+
   return hh * 60 + mm;
 }
 
@@ -130,10 +145,13 @@ function minutesToHoursString(minutes: number) {
 
 function calcDutyMinutes(dutyIn: string, dutyOut: string) {
   if (!dutyIn || dutyIn.toUpperCase() === "OFF" || !dutyOut) return null;
+
   const start = parseTimeToMinutes(dutyIn);
   const end = parseTimeToMinutes(dutyOut);
+
   if (start === null || end === null) return null;
   if (end >= start) return end - start;
+
   return end + 1440 - start;
 }
 
@@ -146,16 +164,16 @@ function formatFlightHours(value: number) {
   return value.toFixed(1);
 }
 
+function getMonthFromDate(dateStr: string) {
+  return dateStr.slice(5, 7);
+}
+
 function getQuarterFromMonth(month: string) {
   const m = Number(month);
   if (m >= 1 && m <= 3) return 1;
   if (m >= 4 && m <= 6) return 2;
   if (m >= 7 && m <= 9) return 3;
   return 4;
-}
-
-function getMonthFromDate(dateStr: string) {
-  return dateStr.slice(5, 7);
 }
 
 function getQuarterFromDate(dateStr: string) {
@@ -179,6 +197,7 @@ function prettyDate(dateStr: string) {
 
 function isMeaningfulRow(row: DutyRow) {
   const flight = parseFlightHours(row.flight_hours);
+
   return (
     row.duty_in !== "OFF" ||
     row.duty_out.trim() !== "" ||
@@ -191,9 +210,6 @@ function isMeaningfulRow(row: DutyRow) {
     row.approval_time.trim() !== ""
   );
 }
-
-const THIS_YEAR = new Date().getFullYear();
-const YEAR_OPTIONS = [THIS_YEAR - 1, THIS_YEAR, THIS_YEAR + 1, THIS_YEAR + 2];
 
 export default function Page() {
   const [selectedPilot, setSelectedPilot] = useState(PILOTS[0]);
@@ -258,7 +274,7 @@ export default function Page() {
       exceedance_reason: r.exceedance_reason ?? "",
       approved_by: r.approved_by ?? "",
       approval_time: r.approval_time ?? "",
-      month_key: r.month_key ?? `${r.log_date.slice(0, 7)}`,
+      month_key: r.month_key ?? r.log_date.slice(0, 7),
     })) as DutyRow[];
 
     const dbByDate = new Map<string, DutyRow>();
@@ -307,7 +323,6 @@ export default function Page() {
       string,
       {
         dutyMinutes: number | null;
-        dutyStatus: string;
         restText: string;
         restOk: boolean | null;
         flight24Status: string;
@@ -321,6 +336,7 @@ export default function Page() {
     for (let i = 0; i < sorted.length; i++) {
       const row = sorted[i];
       const dutyMinutes = calcDutyMinutes(row.duty_in, row.duty_out);
+
       const flightHours = parseFlightHours(row.flight_hours);
       const flight24Status = flightHours > 8 ? "OVER 8.0" : "OK";
 
@@ -361,6 +377,7 @@ export default function Page() {
         (sum, r) => sum + Number(r.day_landings || 0),
         0
       );
+
       const nightLanding90 = windowRows.reduce(
         (sum, r) => sum + Number(r.night_landings || 0),
         0
@@ -372,8 +389,6 @@ export default function Page() {
       if (row.log_date.startsWith(`${selectedYear}-`)) {
         map[row.log_date] = {
           dutyMinutes,
-          dutyStatus:
-            dutyMinutes === null ? "" : dutyMinutes > 14 * 60 ? "OVER 14" : "OK",
           restText,
           restOk,
           flight24Status,
@@ -442,88 +457,50 @@ export default function Page() {
   }, [rows, selectedMonth]);
 
   function updateRow(logDate: string, patch: Partial<DutyRow>) {
-    setRows((prev) =>
-      prev.map((row) => {
-        if (row.log_date !== logDate) return row;
+    const normalizePatchedRow = (row: DutyRow): DutyRow => {
+      const next = { ...row, ...patch };
 
-        const next = { ...row, ...patch };
-
-        if (patch.duty_in !== undefined) {
-          if (!patch.duty_in || patch.duty_in.toUpperCase() === "OFF") {
-            next.duty_in = "OFF";
-            next.duty_out = "";
-          } else {
-            next.duty_in = normalizeTimeInput(patch.duty_in);
-          }
+      if (patch.duty_in !== undefined) {
+        const normalized = normalizeTimeInput(patch.duty_in);
+        if (!normalized || normalized === "OFF") {
+          next.duty_in = "OFF";
+          next.duty_out = "";
+        } else {
+          next.duty_in = normalized;
         }
+      }
 
-        if (patch.duty_out !== undefined) {
-          next.duty_out = patch.duty_out ? normalizeTimeInput(patch.duty_out) : "";
-        }
+      if (patch.duty_out !== undefined) {
+        const normalized = normalizeTimeInput(patch.duty_out);
+        next.duty_out = normalized === "OFF" ? "" : normalized;
+      }
 
-        if (patch.flight_hours !== undefined) {
-          next.flight_hours = patch.flight_hours.replace(/[^\d.]/g, "");
-        }
+      if (patch.flight_hours !== undefined) {
+        next.flight_hours = patch.flight_hours.replace(/[^\d.]/g, "");
+      }
 
-        if (patch.day_landings !== undefined) {
-          next.day_landings = Math.max(0, Number(patch.day_landings || 0));
-        }
+      if (patch.day_landings !== undefined) {
+        next.day_landings = Math.max(0, Number(patch.day_landings || 0));
+      }
 
-        if (patch.night_landings !== undefined) {
-          next.night_landings = Math.max(0, Number(patch.night_landings || 0));
-        }
+      if (patch.night_landings !== undefined) {
+        next.night_landings = Math.max(0, Number(patch.night_landings || 0));
+      }
 
-        const dutyMinutes = calcDutyMinutes(next.duty_in, next.duty_out);
-        if (dutyMinutes === null || dutyMinutes <= 14 * 60) {
-          next.exceedance_reason = "";
-          next.approved_by = "";
-          next.approval_time = "";
-        }
+      const dutyMinutes = calcDutyMinutes(next.duty_in, next.duty_out);
+      if (dutyMinutes === null || dutyMinutes <= 14 * 60) {
+        next.exceedance_reason = "";
+        next.approved_by = "";
+        next.approval_time = "";
+      }
 
-        return next;
-      })
-    );
+      return next;
+    };
+
+    setRows((prev) => prev.map((row) => (row.log_date === logDate ? normalizePatchedRow(row) : row)));
 
     setAllLoadedRows((prev) =>
-      prev.map((row) => {
-        if (row.log_date !== logDate) return row;
-
-        const next = { ...row, ...patch };
-
-        if (patch.duty_in !== undefined) {
-          if (!patch.duty_in || patch.duty_in.toUpperCase() === "OFF") {
-            next.duty_in = "OFF";
-            next.duty_out = "";
-          } else {
-            next.duty_in = normalizeTimeInput(patch.duty_in);
-          }
-        }
-
-        if (patch.duty_out !== undefined) {
-          next.duty_out = patch.duty_out ? normalizeTimeInput(patch.duty_out) : "";
-        }
-
-        if (patch.flight_hours !== undefined) {
-          next.flight_hours = patch.flight_hours.replace(/[^\d.]/g, "");
-        }
-
-        if (patch.day_landings !== undefined) {
-          next.day_landings = Math.max(0, Number(patch.day_landings || 0));
-        }
-
-        if (patch.night_landings !== undefined) {
-          next.night_landings = Math.max(0, Number(patch.night_landings || 0));
-        }
-
-        const dutyMinutes = calcDutyMinutes(next.duty_in, next.duty_out);
-        if (dutyMinutes === null || dutyMinutes <= 14 * 60) {
-          next.exceedance_reason = "";
-          next.approved_by = "";
-          next.approval_time = "";
-        }
-
-        return next;
-      })
+      prev.map((row) => (row.log_date === logDate ? normalizePatchedRow(row) : row))
     );
   }
 
@@ -569,6 +546,7 @@ export default function Page() {
           setRows((prev) =>
             prev.map((r) => (r.log_date === row.log_date ? { ...r, id: data.id } : r))
           );
+
           setAllLoadedRows((prev) =>
             prev.map((r) => (r.log_date === row.log_date ? { ...r, id: data.id } : r))
           );
@@ -591,6 +569,7 @@ export default function Page() {
     }
 
     const monthKey = `${selectedYear}-${selectedMonth}`;
+
     if (isMonthLocked(monthKey)) {
       setMessage("That month is already locked.");
       return;
@@ -605,6 +584,7 @@ export default function Page() {
     const confirmed = window.confirm(
       `By signing, ${selectedPilot} ${monthKey} will be locked. Continue?`
     );
+
     if (!confirmed) {
       setMessage("Signing cancelled.");
       return;
@@ -670,6 +650,7 @@ export default function Page() {
     const confirmed = window.confirm(
       `Unlock ${selectedPilot} ${monthKey}? This will allow editing again.`
     );
+
     if (!confirmed) {
       setMessage("Unlock cancelled.");
       return;
@@ -702,14 +683,15 @@ export default function Page() {
 
   const selectedMonthKey =
     selectedMonth === "ALL" ? "" : `${selectedYear}-${selectedMonth}`;
+
   const selectedMonthLocked =
     selectedMonth === "ALL" ? false : isMonthLocked(selectedMonthKey);
 
   return (
-    <main className="min-h-screen bg-slate-100 p-4 md:p-6">
-      <div className="mx-auto max-w-7xl space-y-4">
-        <div className="rounded-2xl bg-white p-4 shadow">
-          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+    <main className="min-h-screen bg-slate-100 px-6 py-4 md:px-10 md:py-6 lg:px-14">
+      <div className="max-w-[1700px] space-y-4">
+        <div className="rounded-2xl bg-white p-5 shadow">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
             <div>
               <h1 className="text-2xl font-bold text-slate-900">Flight & Duty Log</h1>
               <p className="text-sm text-slate-600">Table: duty_logs_v2</p>
@@ -901,15 +883,15 @@ export default function Page() {
 
                       <td className="border px-2 py-2">
                         <input
-                          className="w-20 rounded border px-2 py-1"
+                          className="w-20 rounded border px-2 py-1 font-mono"
+                          maxLength={4}
                           value={row.duty_in}
                           disabled={rowLocked}
                           onChange={(e) =>
                             updateRow(row.log_date, {
-                              duty_in:
-                                e.target.value.toUpperCase() === "OFF"
-                                  ? "OFF"
-                                  : e.target.value,
+                              duty_in: e.target.value.toUpperCase() === "OFF"
+                                ? "OFF"
+                                : e.target.value,
                             })
                           }
                         />
@@ -917,7 +899,8 @@ export default function Page() {
 
                       <td className="border px-2 py-2">
                         <input
-                          className="w-20 rounded border px-2 py-1"
+                          className="w-20 rounded border px-2 py-1 font-mono"
+                          maxLength={4}
                           value={row.duty_out}
                           disabled={rowLocked || row.duty_in === "OFF"}
                           onChange={(e) =>
@@ -1058,7 +1041,7 @@ export default function Page() {
 
                       <td className="border px-2 py-2">
                         <input
-                          className="w-24 rounded border px-2 py-1"
+                          className="w-24 rounded border px-2 py-1 font-mono"
                           value={row.approval_time}
                           disabled={rowLocked || !dutyOver14}
                           onChange={(e) =>
