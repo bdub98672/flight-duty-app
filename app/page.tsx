@@ -5,7 +5,6 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const PILOTS = ["Reyna", "Clark", "Millea", "Walsh"];
@@ -68,8 +67,10 @@ function daysInMonth(year: number, month: number) {
 
 function buildYearRows(year: number, pilot: string): DutyRow[] {
   const rows: DutyRow[] = [];
+
   for (let month = 1; month <= 12; month++) {
     const count = daysInMonth(year, month);
+
     for (let day = 1; day <= count; day++) {
       const log_date = makeDateString(year, month, day);
       rows.push({
@@ -89,6 +90,7 @@ function buildYearRows(year: number, pilot: string): DutyRow[] {
       });
     }
   }
+
   return rows;
 }
 
@@ -132,47 +134,43 @@ function formatFlightHours(value: number) {
   return value.toFixed(1);
 }
 
-function sanitizeTimeInput(value: string) {
-  const upper = value.toUpperCase();
+function sanitizeTimeForTyping(value: string) {
+  const upper = value.toUpperCase().trim();
+  if (!upper) return "";
   if (upper.startsWith("OFF")) return "OFF";
   return upper.replace(/[^\d]/g, "").slice(0, 4);
 }
 
-function normalizeTimeInput(value: string) {
-  const raw = value.trim().toUpperCase();
+function normalizeTime(value: string) {
+  const raw = (value || "").trim().toUpperCase();
 
   if (!raw) return "";
   if (raw === "OFF") return "OFF";
 
-  const digits = raw.replace(/\D/g, "");
+  const digits = raw.replace(/[^\d]/g, "");
   if (!digits) return "";
 
-  let formatted = "";
+  let t = "";
 
-  if (digits.length === 1) {
-    formatted = `0${digits}00`;
-  } else if (digits.length === 2) {
-    formatted = `${digits}00`;
-  } else if (digits.length === 3) {
-    formatted = `0${digits}`;
-  } else {
-    formatted = digits.slice(0, 4);
-  }
+  if (digits.length === 1) t = `0${digits}00`;
+  else if (digits.length === 2) t = `${digits}00`;
+  else if (digits.length === 3) t = `0${digits}`;
+  else t = digits.slice(0, 4);
 
-  const hh = Number(formatted.slice(0, 2));
-  const mm = Number(formatted.slice(2, 4));
+  const hh = Number(t.slice(0, 2));
+  const mm = Number(t.slice(2, 4));
 
   if (hh > 23 || mm > 59) return "";
 
-  return formatted;
+  return t;
 }
 
 function parseTimeToMinutes(value: string) {
-  const normalized = normalizeTimeInput(value);
-  if (!normalized || normalized === "OFF") return null;
+  const t = normalizeTime(value);
+  if (!t || t === "OFF") return null;
 
-  const hh = Number(normalized.slice(0, 2));
-  const mm = Number(normalized.slice(2, 4));
+  const hh = Number(t.slice(0, 2));
+  const mm = Number(t.slice(2, 4));
 
   if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
   return hh * 60 + mm;
@@ -193,10 +191,14 @@ function calcDutyMinutes(dutyIn: string, dutyOut: string) {
   return end + 1440 - start;
 }
 
+function isOff(value: string) {
+  return normalizeTime(value) === "OFF";
+}
+
 function isMeaningfulRow(row: DutyRow) {
   const flight = parseFlightHours(row.flight_hours);
   return (
-    normalizeTimeInput(row.duty_in) !== "OFF" ||
+    !isOff(row.duty_in) ||
     row.duty_out.trim() !== "" ||
     flight > 0 ||
     row.day_landings > 0 ||
@@ -208,11 +210,10 @@ function isMeaningfulRow(row: DutyRow) {
   );
 }
 
-function applyBusinessRules(row: DutyRow): DutyRow {
+function cleanRowForRules(row: DutyRow): DutyRow {
   const next = { ...row };
 
-  const normalizedDutyIn = normalizeTimeInput(next.duty_in);
-  if (normalizedDutyIn === "OFF") {
+  if (isOff(next.duty_in)) {
     next.duty_in = "OFF";
     next.duty_out = "";
   }
@@ -295,8 +296,14 @@ export default function Page() {
     const byDate = new Map<string, DutyRow>();
     mapped.forEach((r) => byDate.set(r.log_date, r));
 
-    const mergedYearRows = yearRows.map((base) => byDate.get(base.log_date) ?? base);
-    const priorRows = mapped.filter((r) => r.log_date < `${year}-01-01`);
+    const mergedYearRows = yearRows.map((base) => {
+      const found = byDate.get(base.log_date);
+      return found ? cleanRowForRules(found) : base;
+    });
+
+    const priorRows = mapped
+      .filter((r) => r.log_date < `${year}-01-01`)
+      .map(cleanRowForRules);
 
     const signoffMap: Record<string, MonthSignoff> = {};
     (signoffRows || []).forEach((s: any) => {
@@ -326,7 +333,7 @@ export default function Page() {
       prev.map((row) => {
         if (row.log_date !== logDate) return row;
 
-        const next = { ...row, ...patch };
+        let next: DutyRow = { ...row, ...patch };
 
         if (patch.flight_hours !== undefined) {
           next.flight_hours = patch.flight_hours.replace(/[^\d.]/g, "");
@@ -340,36 +347,45 @@ export default function Page() {
           next.night_landings = Math.max(0, Number(patch.night_landings || 0));
         }
 
-        return next;
+        return cleanRowForRules(next);
       })
     );
   }
 
-  function handleTimeChange(
-    logDate: string,
-    field: "duty_in" | "duty_out" | "approval_time",
-    rawValue: string
-  ) {
-    updateRow(logDate, { [field]: sanitizeTimeInput(rawValue) } as Partial<DutyRow>);
+  function handleDutyInChange(logDate: string, value: string) {
+    updateRow(logDate, { duty_in: sanitizeTimeForTyping(value) });
   }
 
-  function handleTimeBlur(
-    logDate: string,
-    field: "duty_in" | "duty_out" | "approval_time"
-  ) {
+  function handleDutyOutChange(logDate: string, value: string) {
+    updateRow(logDate, { duty_out: sanitizeTimeForTyping(value) });
+  }
+
+  function handleApprovalTimeChange(logDate: string, value: string) {
+    updateRow(logDate, { approval_time: sanitizeTimeForTyping(value) });
+  }
+
+  function handleDutyInBlur(logDate: string) {
     const row = rows.find((r) => r.log_date === logDate);
     if (!row) return;
 
-    const current = row[field] ?? "";
-    const normalized = normalizeTimeInput(current);
+    const normalized = normalizeTime(row.duty_in);
+    updateRow(logDate, { duty_in: normalized || "OFF" });
+  }
 
-    if (field === "duty_in") {
-      updateRow(logDate, { duty_in: normalized || "OFF" });
-    } else if (field === "duty_out") {
-      updateRow(logDate, { duty_out: normalized === "OFF" ? "" : normalized });
-    } else {
-      updateRow(logDate, { approval_time: normalized === "OFF" ? "" : normalized });
-    }
+  function handleDutyOutBlur(logDate: string) {
+    const row = rows.find((r) => r.log_date === logDate);
+    if (!row) return;
+
+    const normalized = normalizeTime(row.duty_out);
+    updateRow(logDate, { duty_out: normalized === "OFF" ? "" : normalized });
+  }
+
+  function handleApprovalTimeBlur(logDate: string) {
+    const row = rows.find((r) => r.log_date === logDate);
+    if (!row) return;
+
+    const normalized = normalizeTime(row.approval_time);
+    updateRow(logDate, { approval_time: normalized === "OFF" ? "" : normalized });
   }
 
   const displayedRows = useMemo(() => {
@@ -397,17 +413,16 @@ export default function Page() {
     for (let i = 0; i < sorted.length; i++) {
       const row = sorted[i];
       const dutyMinutes = calcDutyMinutes(row.duty_in, row.duty_out);
-
       const flightHours = parseFlightHours(row.flight_hours);
       const flight24Status = flightHours > 8 ? "OVER 8.0" : "OK";
 
       let restText = "";
       let restOk: boolean | null = null;
 
-      if (i > 0 && normalizeTimeInput(row.duty_in) !== "OFF") {
+      if (i > 0 && !isOff(row.duty_in)) {
         const prev = sorted[i - 1];
 
-        if (normalizeTimeInput(prev.duty_in) === "OFF") {
+        if (isOff(prev.duty_in)) {
           restText = "24+";
           restOk = true;
         } else {
@@ -523,38 +538,37 @@ export default function Page() {
     try {
       const unlockedRows = rows.filter((row) => !isMonthLocked(row.month_key));
 
-      for (const originalRow of unlockedRows) {
-        const normalizedRow = applyBusinessRules({
-          ...originalRow,
-          duty_in: normalizeTimeInput(originalRow.duty_in) || "OFF",
-          duty_out: normalizeTimeInput(originalRow.duty_out) || "",
-          approval_time: normalizeTimeInput(originalRow.approval_time) || "",
+      for (const row of unlockedRows) {
+        const prepared = cleanRowForRules({
+          ...row,
+          duty_in: normalizeTime(row.duty_in) || "OFF",
+          duty_out: normalizeTime(row.duty_out) || "",
+          approval_time: normalizeTime(row.approval_time) || "",
         });
 
         const payload = {
-          pilot_name: normalizedRow.pilot_name,
-          log_date: normalizedRow.log_date,
-          duty_in: normalizedRow.duty_in || "OFF",
-          duty_out: normalizedRow.duty_out || "",
-          flight_hours:
-            normalizedRow.flight_hours === "" ? null : parseFlightHours(normalizedRow.flight_hours),
-          day_landings: Number(normalizedRow.day_landings || 0),
-          night_landings: Number(normalizedRow.night_landings || 0),
-          remarks: normalizedRow.remarks || "",
-          exceedance_reason: normalizedRow.exceedance_reason || "",
-          approved_by: normalizedRow.approved_by || "",
-          approval_time: normalizedRow.approved_by ? normalizedRow.approval_time || "" : "",
-          month_key: normalizedRow.month_key,
+          pilot_name: prepared.pilot_name,
+          log_date: prepared.log_date,
+          duty_in: prepared.duty_in || "OFF",
+          duty_out: prepared.duty_out || "",
+          flight_hours: prepared.flight_hours === "" ? null : parseFlightHours(prepared.flight_hours),
+          day_landings: Number(prepared.day_landings || 0),
+          night_landings: Number(prepared.night_landings || 0),
+          remarks: prepared.remarks || "",
+          exceedance_reason: prepared.exceedance_reason || "",
+          approved_by: prepared.approved_by || "",
+          approval_time: prepared.approved_by ? prepared.approval_time || "" : "",
+          month_key: prepared.month_key,
         };
 
-        if (originalRow.id) {
+        if (row.id) {
           const { error } = await supabase
             .from("duty_logs_v2")
             .update(payload)
-            .eq("id", originalRow.id);
+            .eq("id", row.id);
 
           if (error) throw error;
-        } else if (isMeaningfulRow(normalizedRow)) {
+        } else if (isMeaningfulRow(prepared)) {
           const { data, error } = await supabase
             .from("duty_logs_v2")
             .insert(payload)
@@ -565,7 +579,7 @@ export default function Page() {
 
           setRows((prev) =>
             prev.map((r) =>
-              r.log_date === originalRow.log_date ? { ...normalizedRow, id: data.id } : r
+              r.log_date === row.log_date ? { ...prepared, id: data.id } : r
             )
           );
         }
@@ -713,9 +727,7 @@ export default function Page() {
 
             <div className="flex flex-wrap gap-3">
               <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Pilot
-                </label>
+                <label className="mb-1 block text-sm font-medium text-slate-700">Pilot</label>
                 <select
                   className="rounded-lg border border-slate-300 bg-white px-3 py-2"
                   value={selectedPilot}
@@ -730,9 +742,7 @@ export default function Page() {
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Year
-                </label>
+                <label className="mb-1 block text-sm font-medium text-slate-700">Year</label>
                 <select
                   className="rounded-lg border border-slate-300 bg-white px-3 py-2"
                   value={selectedYear}
@@ -747,9 +757,7 @@ export default function Page() {
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Month
-                </label>
+                <label className="mb-1 block text-sm font-medium text-slate-700">Month</label>
                 <select
                   className="rounded-lg border border-slate-300 bg-white px-3 py-2"
                   value={selectedMonth}
@@ -888,7 +896,7 @@ export default function Page() {
                   const d = derivedByDate[row.log_date];
                   const dutyOver14 = (d?.dutyMinutes || 0) > 14 * 60;
                   const rowLocked = isRowLocked(row);
-                  const dutyInIsOff = normalizeTimeInput(row.duty_in) === "OFF";
+                  const dutyInOff = isOff(row.duty_in);
 
                   return (
                     <tr key={row.log_date} className="odd:bg-white even:bg-slate-50">
@@ -903,10 +911,8 @@ export default function Page() {
                           placeholder="0800"
                           value={row.duty_in}
                           disabled={rowLocked}
-                          onChange={(e) =>
-                            handleTimeChange(row.log_date, "duty_in", e.target.value)
-                          }
-                          onBlur={() => handleTimeBlur(row.log_date, "duty_in")}
+                          onChange={(e) => handleDutyInChange(row.log_date, e.target.value)}
+                          onBlur={() => handleDutyInBlur(row.log_date)}
                         />
                       </td>
 
@@ -916,11 +922,9 @@ export default function Page() {
                           className="w-20 rounded border px-2 py-1 font-mono"
                           placeholder="2000"
                           value={row.duty_out}
-                          disabled={rowLocked || dutyInIsOff}
-                          onChange={(e) =>
-                            handleTimeChange(row.log_date, "duty_out", e.target.value)
-                          }
-                          onBlur={() => handleTimeBlur(row.log_date, "duty_out")}
+                          disabled={rowLocked || dutyInOff}
+                          onChange={(e) => handleDutyOutChange(row.log_date, e.target.value)}
+                          onBlur={() => handleDutyOutBlur(row.log_date)}
                         />
                       </td>
 
@@ -1066,9 +1070,9 @@ export default function Page() {
                           value={row.approval_time}
                           disabled={rowLocked || !dutyOver14}
                           onChange={(e) =>
-                            handleTimeChange(row.log_date, "approval_time", e.target.value)
+                            handleApprovalTimeChange(row.log_date, e.target.value)
                           }
-                          onBlur={() => handleTimeBlur(row.log_date, "approval_time")}
+                          onBlur={() => handleApprovalTimeBlur(row.log_date)}
                         />
                       </td>
                     </tr>
