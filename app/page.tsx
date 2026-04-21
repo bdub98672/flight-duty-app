@@ -17,6 +17,7 @@ type MonthKey =
   | 'november'
   | 'december';
 
+
 type DayRow = {
   day: number;
   duty_in: string;
