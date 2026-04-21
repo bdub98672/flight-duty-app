@@ -68,13 +68,10 @@ function daysInMonth(year: number, month: number) {
 
 function buildYearRows(year: number, pilot: string): DutyRow[] {
   const rows: DutyRow[] = [];
-
   for (let month = 1; month <= 12; month++) {
     const count = daysInMonth(year, month);
-
     for (let day = 1; day <= count; day++) {
       const log_date = makeDateString(year, month, day);
-
       rows.push({
         id: null,
         pilot_name: pilot,
@@ -92,81 +89,7 @@ function buildYearRows(year: number, pilot: string): DutyRow[] {
       });
     }
   }
-
   return rows;
-}
-
-function sanitizeTimeTyping(value: string) {
-  const upper = value.toUpperCase().trim();
-
-  if (!upper) return "";
-  if (upper === "OFF") return "OFF";
-
-  return upper.replace(/\D/g, "").slice(0, 4);
-}
-
-function normalizeTimeValue(value: string) {
-  const raw = value.toUpperCase().trim();
-
-  if (!raw) return "";
-  if (raw === "OFF") return "OFF";
-
-  const digits = raw.replace(/\D/g, "");
-  if (!digits) return "";
-
-  let formatted = "";
-
-  if (digits.length === 1 || digits.length === 2) {
-    formatted = `${digits.padStart(2, "0")}00`;
-  } else if (digits.length === 3) {
-    formatted = `0${digits}`;
-  } else {
-    formatted = digits.slice(0, 4);
-  }
-
-  const hh = Number(formatted.slice(0, 2));
-  const mm = Number(formatted.slice(2, 4));
-
-  if (hh > 23 || mm > 59) return "";
-
-  return formatted;
-}
-
-function parseTimeToMinutes(value: string) {
-  const normalized = normalizeTimeValue(value);
-  if (!normalized || normalized === "OFF") return null;
-
-  const hh = Number(normalized.slice(0, 2));
-  const mm = Number(normalized.slice(2, 4));
-
-  if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
-
-  return hh * 60 + mm;
-}
-
-function minutesToHoursString(minutes: number) {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return `${h}:${pad(m)}`;
-}
-
-function calcDutyMinutes(dutyIn: string, dutyOut: string) {
-  const start = parseTimeToMinutes(dutyIn);
-  const end = parseTimeToMinutes(dutyOut);
-
-  if (start === null || end === null) return null;
-  if (end >= start) return end - start;
-
-  return end + 1440 - start;
-}
-
-function parseFlightHours(value: string) {
-  const n = parseFloat((value || "").trim());
-  return Number.isFinite(n) ? n : 0;
-}
-
-function formatFlightHours(value: number) {
-  return value.toFixed(1);
 }
 
 function getMonthFromDate(dateStr: string) {
@@ -200,11 +123,80 @@ function prettyDate(dateStr: string) {
   });
 }
 
+function parseFlightHours(value: string) {
+  const n = parseFloat((value || "").trim());
+  return Number.isFinite(n) ? n : 0;
+}
+
+function formatFlightHours(value: number) {
+  return value.toFixed(1);
+}
+
+function sanitizeTimeInput(value: string) {
+  const upper = value.toUpperCase();
+  if (upper.startsWith("OFF")) return "OFF";
+  return upper.replace(/[^\d]/g, "").slice(0, 4);
+}
+
+function normalizeTimeInput(value: string) {
+  const raw = value.trim().toUpperCase();
+
+  if (!raw) return "";
+  if (raw === "OFF") return "OFF";
+
+  const digits = raw.replace(/\D/g, "");
+  if (!digits) return "";
+
+  let formatted = "";
+
+  if (digits.length === 1) {
+    formatted = `0${digits}00`;
+  } else if (digits.length === 2) {
+    formatted = `${digits}00`;
+  } else if (digits.length === 3) {
+    formatted = `0${digits}`;
+  } else {
+    formatted = digits.slice(0, 4);
+  }
+
+  const hh = Number(formatted.slice(0, 2));
+  const mm = Number(formatted.slice(2, 4));
+
+  if (hh > 23 || mm > 59) return "";
+
+  return formatted;
+}
+
+function parseTimeToMinutes(value: string) {
+  const normalized = normalizeTimeInput(value);
+  if (!normalized || normalized === "OFF") return null;
+
+  const hh = Number(normalized.slice(0, 2));
+  const mm = Number(normalized.slice(2, 4));
+
+  if (Number.isNaN(hh) || Number.isNaN(mm)) return null;
+  return hh * 60 + mm;
+}
+
+function minutesToHoursString(minutes: number) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${h}:${pad(m)}`;
+}
+
+function calcDutyMinutes(dutyIn: string, dutyOut: string) {
+  const start = parseTimeToMinutes(dutyIn);
+  const end = parseTimeToMinutes(dutyOut);
+
+  if (start === null || end === null) return null;
+  if (end >= start) return end - start;
+  return end + 1440 - start;
+}
+
 function isMeaningfulRow(row: DutyRow) {
   const flight = parseFlightHours(row.flight_hours);
-
   return (
-    row.duty_in !== "OFF" ||
+    normalizeTimeInput(row.duty_in) !== "OFF" ||
     row.duty_out.trim() !== "" ||
     flight > 0 ||
     row.day_landings > 0 ||
@@ -216,12 +208,31 @@ function isMeaningfulRow(row: DutyRow) {
   );
 }
 
+function applyBusinessRules(row: DutyRow): DutyRow {
+  const next = { ...row };
+
+  const normalizedDutyIn = normalizeTimeInput(next.duty_in);
+  if (normalizedDutyIn === "OFF") {
+    next.duty_in = "OFF";
+    next.duty_out = "";
+  }
+
+  const dutyMinutes = calcDutyMinutes(next.duty_in, next.duty_out);
+  if (dutyMinutes === null || dutyMinutes <= 14 * 60) {
+    next.exceedance_reason = "";
+    next.approved_by = "";
+    next.approval_time = "";
+  }
+
+  return next;
+}
+
 export default function Page() {
   const [selectedPilot, setSelectedPilot] = useState(PILOTS[0]);
   const [selectedYear, setSelectedYear] = useState(THIS_YEAR);
   const [selectedMonth, setSelectedMonth] = useState("ALL");
   const [rows, setRows] = useState<DutyRow[]>([]);
-  const [allLoadedRows, setAllLoadedRows] = useState<DutyRow[]>([]);
+  const [lookbackRows, setLookbackRows] = useState<DutyRow[]>([]);
   const [signoffs, setSignoffs] = useState<Record<string, MonthSignoff>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -231,7 +242,7 @@ export default function Page() {
     setLoading(true);
     setMessage("");
 
-    const visibleYearRows = buildYearRows(year, pilot);
+    const yearRows = buildYearRows(year, pilot);
     const queryStart = `${year - 1}-10-01`;
     const queryEnd = `${year}-12-31`;
 
@@ -253,8 +264,8 @@ export default function Page() {
 
     if (rowsError) {
       setMessage(`Load error: ${rowsError.message}`);
-      setRows(visibleYearRows);
-      setAllLoadedRows(visibleYearRows);
+      setRows(yearRows);
+      setLookbackRows([]);
       setSignoffs({});
       setLoading(false);
       return;
@@ -264,7 +275,7 @@ export default function Page() {
       setMessage(`Signoff load error: ${signoffError.message}`);
     }
 
-    const db = (dbRows || []).map((r: any) => ({
+    const mapped = (dbRows || []).map((r: any) => ({
       id: r.id ?? null,
       pilot_name: r.pilot_name ?? pilot,
       log_date: r.log_date,
@@ -281,26 +292,19 @@ export default function Page() {
       month_key: r.month_key ?? r.log_date.slice(0, 7),
     })) as DutyRow[];
 
-    const dbByDate = new Map<string, DutyRow>();
-    db.forEach((r) => dbByDate.set(r.log_date, r));
+    const byDate = new Map<string, DutyRow>();
+    mapped.forEach((r) => byDate.set(r.log_date, r));
 
-    const mergedVisibleYear = visibleYearRows.map((base) => {
-      const found = dbByDate.get(base.log_date);
-      return found ? found : base;
-    });
-
-    const lookbackRows = db.filter((r) => r.log_date < `${year}-01-01`);
-    const fullLoaded = [...lookbackRows, ...mergedVisibleYear].sort((a, b) =>
-      a.log_date.localeCompare(b.log_date)
-    );
+    const mergedYearRows = yearRows.map((base) => byDate.get(base.log_date) ?? base);
+    const priorRows = mapped.filter((r) => r.log_date < `${year}-01-01`);
 
     const signoffMap: Record<string, MonthSignoff> = {};
     (signoffRows || []).forEach((s: any) => {
       signoffMap[s.month_key] = s;
     });
 
-    setRows(mergedVisibleYear);
-    setAllLoadedRows(fullLoaded);
+    setRows(mergedYearRows);
+    setLookbackRows(priorRows);
     setSignoffs(signoffMap);
     setLoading(false);
   }
@@ -315,24 +319,6 @@ export default function Page() {
 
   function isRowLocked(row: DutyRow) {
     return isMonthLocked(row.month_key);
-  }
-
-  function applyBusinessRules(row: DutyRow): DutyRow {
-    const next = { ...row };
-
-    if (next.duty_in.toUpperCase() === "OFF") {
-      next.duty_in = "OFF";
-      next.duty_out = "";
-    }
-
-    const dutyMinutes = calcDutyMinutes(next.duty_in, next.duty_out);
-    if (dutyMinutes === null || dutyMinutes <= 14 * 60) {
-      next.exceedance_reason = "";
-      next.approved_by = "";
-      next.approval_time = "";
-    }
-
-    return next;
   }
 
   function updateRow(logDate: string, patch: Partial<DutyRow>) {
@@ -354,51 +340,36 @@ export default function Page() {
           next.night_landings = Math.max(0, Number(patch.night_landings || 0));
         }
 
-        return applyBusinessRules(next);
-      })
-    );
-
-    setAllLoadedRows((prev) =>
-      prev.map((row) => {
-        if (row.log_date !== logDate) return row;
-
-        const next = { ...row, ...patch };
-
-        if (patch.flight_hours !== undefined) {
-          next.flight_hours = patch.flight_hours.replace(/[^\d.]/g, "");
-        }
-
-        if (patch.day_landings !== undefined) {
-          next.day_landings = Math.max(0, Number(patch.day_landings || 0));
-        }
-
-        if (patch.night_landings !== undefined) {
-          next.night_landings = Math.max(0, Number(patch.night_landings || 0));
-        }
-
-        return applyBusinessRules(next);
+        return next;
       })
     );
   }
 
-  function normalizeTimeField(logDate: string, field: "duty_in" | "duty_out" | "approval_time") {
-    const target = rows.find((r) => r.log_date === logDate);
-    if (!target) return;
+  function handleTimeChange(
+    logDate: string,
+    field: "duty_in" | "duty_out" | "approval_time",
+    rawValue: string
+  ) {
+    updateRow(logDate, { [field]: sanitizeTimeInput(rawValue) } as Partial<DutyRow>);
+  }
 
-    const currentValue = target[field] ?? "";
-    const normalized = normalizeTimeValue(currentValue);
+  function handleTimeBlur(
+    logDate: string,
+    field: "duty_in" | "duty_out" | "approval_time"
+  ) {
+    const row = rows.find((r) => r.log_date === logDate);
+    if (!row) return;
+
+    const current = row[field] ?? "";
+    const normalized = normalizeTimeInput(current);
 
     if (field === "duty_in") {
       updateRow(logDate, { duty_in: normalized || "OFF" });
-      return;
+    } else if (field === "duty_out") {
+      updateRow(logDate, { duty_out: normalized === "OFF" ? "" : normalized });
+    } else {
+      updateRow(logDate, { approval_time: normalized === "OFF" ? "" : normalized });
     }
-
-    if (field === "duty_out") {
-      updateRow(logDate, { duty_out: normalized });
-      return;
-    }
-
-    updateRow(logDate, { approval_time: normalized });
   }
 
   const displayedRows = useMemo(() => {
@@ -419,24 +390,27 @@ export default function Page() {
       }
     > = {};
 
-    const sorted = [...allLoadedRows].sort((a, b) => a.log_date.localeCompare(b.log_date));
+    const sorted = [...lookbackRows, ...rows].sort((a, b) =>
+      a.log_date.localeCompare(b.log_date)
+    );
 
     for (let i = 0; i < sorted.length; i++) {
       const row = sorted[i];
       const dutyMinutes = calcDutyMinutes(row.duty_in, row.duty_out);
+
       const flightHours = parseFlightHours(row.flight_hours);
       const flight24Status = flightHours > 8 ? "OVER 8.0" : "OK";
 
       let restText = "";
       let restOk: boolean | null = null;
 
-      if (i > 0 && normalizeTimeValue(row.duty_in) !== "OFF") {
+      if (i > 0 && normalizeTimeInput(row.duty_in) !== "OFF") {
         const prev = sorted[i - 1];
 
-        if (normalizeTimeValue(prev.duty_in) === "OFF") {
+        if (normalizeTimeInput(prev.duty_in) === "OFF") {
           restText = "24+";
           restOk = true;
-        } else if (prev.duty_out) {
+        } else {
           const prevOut = parseTimeToMinutes(prev.duty_out);
           const currIn = parseTimeToMinutes(row.duty_in);
 
@@ -464,7 +438,6 @@ export default function Page() {
         (sum, r) => sum + Number(r.day_landings || 0),
         0
       );
-
       const nightLanding90 = windowRows.reduce(
         (sum, r) => sum + Number(r.night_landings || 0),
         0
@@ -486,7 +459,7 @@ export default function Page() {
     }
 
     return map;
-  }, [allLoadedRows, selectedYear]);
+  }, [rows, lookbackRows, selectedYear]);
 
   const totals = useMemo(() => {
     const monthRows =
@@ -550,41 +523,38 @@ export default function Page() {
     try {
       const unlockedRows = rows.filter((row) => !isMonthLocked(row.month_key));
 
-      for (const row of unlockedRows) {
-        const normalizedDutyIn = normalizeTimeValue(row.duty_in) || "OFF";
-        const normalizedDutyOut = normalizeTimeValue(row.duty_out);
-        const normalizedApprovalTime = normalizeTimeValue(row.approval_time);
-
-        const prepared: DutyRow = applyBusinessRules({
-          ...row,
-          duty_in: normalizedDutyIn,
-          duty_out: normalizedDutyOut === "OFF" ? "" : normalizedDutyOut,
-          approval_time: normalizedApprovalTime === "OFF" ? "" : normalizedApprovalTime,
+      for (const originalRow of unlockedRows) {
+        const normalizedRow = applyBusinessRules({
+          ...originalRow,
+          duty_in: normalizeTimeInput(originalRow.duty_in) || "OFF",
+          duty_out: normalizeTimeInput(originalRow.duty_out) || "",
+          approval_time: normalizeTimeInput(originalRow.approval_time) || "",
         });
 
         const payload = {
-          pilot_name: prepared.pilot_name,
-          log_date: prepared.log_date,
-          duty_in: prepared.duty_in || "OFF",
-          duty_out: prepared.duty_out || "",
-          flight_hours: prepared.flight_hours === "" ? null : parseFlightHours(prepared.flight_hours),
-          day_landings: Number(prepared.day_landings || 0),
-          night_landings: Number(prepared.night_landings || 0),
-          remarks: prepared.remarks || "",
-          exceedance_reason: prepared.exceedance_reason || "",
-          approved_by: prepared.approved_by || "",
-          approval_time: prepared.approved_by ? prepared.approval_time || "" : "",
-          month_key: prepared.month_key,
+          pilot_name: normalizedRow.pilot_name,
+          log_date: normalizedRow.log_date,
+          duty_in: normalizedRow.duty_in || "OFF",
+          duty_out: normalizedRow.duty_out || "",
+          flight_hours:
+            normalizedRow.flight_hours === "" ? null : parseFlightHours(normalizedRow.flight_hours),
+          day_landings: Number(normalizedRow.day_landings || 0),
+          night_landings: Number(normalizedRow.night_landings || 0),
+          remarks: normalizedRow.remarks || "",
+          exceedance_reason: normalizedRow.exceedance_reason || "",
+          approved_by: normalizedRow.approved_by || "",
+          approval_time: normalizedRow.approved_by ? normalizedRow.approval_time || "" : "",
+          month_key: normalizedRow.month_key,
         };
 
-        if (row.id) {
+        if (originalRow.id) {
           const { error } = await supabase
             .from("duty_logs_v2")
             .update(payload)
-            .eq("id", row.id);
+            .eq("id", originalRow.id);
 
           if (error) throw error;
-        } else if (isMeaningfulRow(prepared)) {
+        } else if (isMeaningfulRow(normalizedRow)) {
           const { data, error } = await supabase
             .from("duty_logs_v2")
             .insert(payload)
@@ -594,11 +564,9 @@ export default function Page() {
           if (error) throw error;
 
           setRows((prev) =>
-            prev.map((r) => (r.log_date === row.log_date ? { ...prepared, id: data.id } : r))
-          );
-
-          setAllLoadedRows((prev) =>
-            prev.map((r) => (r.log_date === row.log_date ? { ...prepared, id: data.id } : r))
+            prev.map((r) =>
+              r.log_date === originalRow.log_date ? { ...normalizedRow, id: data.id } : r
+            )
           );
         }
       }
@@ -619,7 +587,6 @@ export default function Page() {
     }
 
     const monthKey = `${selectedYear}-${selectedMonth}`;
-
     if (isMonthLocked(monthKey)) {
       setMessage("That month is already locked.");
       return;
@@ -634,7 +601,6 @@ export default function Page() {
     const confirmed = window.confirm(
       `By signing, ${selectedPilot} ${monthKey} will be locked. Continue?`
     );
-
     if (!confirmed) {
       setMessage("Signing cancelled.");
       return;
@@ -700,7 +666,6 @@ export default function Page() {
     const confirmed = window.confirm(
       `Unlock ${selectedPilot} ${monthKey}? This will allow editing again.`
     );
-
     if (!confirmed) {
       setMessage("Unlock cancelled.");
       return;
@@ -733,7 +698,6 @@ export default function Page() {
 
   const selectedMonthKey =
     selectedMonth === "ALL" ? "" : `${selectedYear}-${selectedMonth}`;
-
   const selectedMonthLocked =
     selectedMonth === "ALL" ? false : isMonthLocked(selectedMonthKey);
 
@@ -924,6 +888,7 @@ export default function Page() {
                   const d = derivedByDate[row.log_date];
                   const dutyOver14 = (d?.dutyMinutes || 0) > 14 * 60;
                   const rowLocked = isRowLocked(row);
+                  const dutyInIsOff = normalizeTimeInput(row.duty_in) === "OFF";
 
                   return (
                     <tr key={row.log_date} className="odd:bg-white even:bg-slate-50">
@@ -933,31 +898,29 @@ export default function Page() {
 
                       <td className="border px-2 py-2">
                         <input
+                          type="text"
                           className="w-20 rounded border px-2 py-1 font-mono"
-                          maxLength={4}
+                          placeholder="0800"
                           value={row.duty_in}
                           disabled={rowLocked}
                           onChange={(e) =>
-                            updateRow(row.log_date, {
-                              duty_in: sanitizeTimeTyping(e.target.value),
-                            })
+                            handleTimeChange(row.log_date, "duty_in", e.target.value)
                           }
-                          onBlur={() => normalizeTimeField(row.log_date, "duty_in")}
+                          onBlur={() => handleTimeBlur(row.log_date, "duty_in")}
                         />
                       </td>
 
                       <td className="border px-2 py-2">
                         <input
+                          type="text"
                           className="w-20 rounded border px-2 py-1 font-mono"
-                          maxLength={4}
+                          placeholder="2000"
                           value={row.duty_out}
-                          disabled={rowLocked || normalizeTimeValue(row.duty_in) === "OFF"}
+                          disabled={rowLocked || dutyInIsOff}
                           onChange={(e) =>
-                            updateRow(row.log_date, {
-                              duty_out: sanitizeTimeTyping(e.target.value),
-                            })
+                            handleTimeChange(row.log_date, "duty_out", e.target.value)
                           }
-                          onBlur={() => normalizeTimeField(row.log_date, "duty_out")}
+                          onBlur={() => handleTimeBlur(row.log_date, "duty_out")}
                         />
                       </td>
 
@@ -987,6 +950,7 @@ export default function Page() {
 
                       <td className="border px-2 py-2">
                         <input
+                          type="text"
                           className="w-20 rounded border px-2 py-1"
                           value={row.flight_hours}
                           disabled={rowLocked}
@@ -1058,6 +1022,7 @@ export default function Page() {
 
                       <td className="border px-2 py-2">
                         <input
+                          type="text"
                           className="w-56 rounded border px-2 py-1"
                           value={row.remarks}
                           disabled={rowLocked}
@@ -1069,6 +1034,7 @@ export default function Page() {
 
                       <td className="border px-2 py-2">
                         <input
+                          type="text"
                           className="w-56 rounded border px-2 py-1"
                           value={row.exceedance_reason}
                           disabled={rowLocked || !dutyOver14}
@@ -1082,6 +1048,7 @@ export default function Page() {
 
                       <td className="border px-2 py-2">
                         <input
+                          type="text"
                           className="w-36 rounded border px-2 py-1"
                           value={row.approved_by}
                           disabled={rowLocked || !dutyOver14}
@@ -1093,16 +1060,15 @@ export default function Page() {
 
                       <td className="border px-2 py-2">
                         <input
+                          type="text"
                           className="w-24 rounded border px-2 py-1 font-mono"
-                          maxLength={4}
+                          placeholder="1430"
                           value={row.approval_time}
                           disabled={rowLocked || !dutyOver14}
                           onChange={(e) =>
-                            updateRow(row.log_date, {
-                              approval_time: sanitizeTimeTyping(e.target.value),
-                            })
+                            handleTimeChange(row.log_date, "approval_time", e.target.value)
                           }
-                          onBlur={() => normalizeTimeField(row.log_date, "approval_time")}
+                          onBlur={() => handleTimeBlur(row.log_date, "approval_time")}
                         />
                       </td>
                     </tr>
