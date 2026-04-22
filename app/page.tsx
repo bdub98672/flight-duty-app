@@ -234,6 +234,15 @@ function applyRules(row: DutyRow): DutyRow {
   return next;
 }
 
+function toApprovalTimestamp(logDate: string, timeValue: string): string | null {
+  const normalized = normalizeTime(timeValue);
+  if (!normalized) return null;
+
+  const hh = normalized.slice(0, 2);
+  const mm = normalized.slice(2, 4);
+  return `${logDate}T${hh}:${mm}:00`;
+}
+
 export default function Page() {
   const [selectedPilot, setSelectedPilot] = useState(PILOTS[0]);
   const [selectedYear, setSelectedYear] = useState(THIS_YEAR);
@@ -283,6 +292,14 @@ export default function Page() {
     }
 
     const mapped = (dbRows || []).map((r: any) => {
+      let approvalTimeText = "";
+      if (r.approval_time) {
+        const dt = new Date(r.approval_time);
+        if (!Number.isNaN(dt.getTime())) {
+          approvalTimeText = `${pad(dt.getHours())}${pad(dt.getMinutes())}`;
+        }
+      }
+
       const raw: DutyRow = {
         id: r.id ?? null,
         pilot_name: r.pilot_name ?? pilot,
@@ -296,7 +313,7 @@ export default function Page() {
         remarks: r.remarks ?? "",
         exceedance_reason: r.exceedance_reason ?? "",
         approved_by: r.approved_by ?? "",
-        approval_time: r.approval_time ?? "",
+        approval_time: approvalTimeText,
         month_key: r.month_key ?? r.log_date.slice(0, 7),
       };
 
@@ -501,6 +518,11 @@ export default function Page() {
           approval_time: normalizeTime(row.approval_time) || "",
         });
 
+        const approvalTimestamp =
+          prepared.approved_by.trim() && prepared.approval_time.trim()
+            ? toApprovalTimestamp(prepared.log_date, prepared.approval_time)
+            : null;
+
         const payload = {
           pilot_name: prepared.pilot_name,
           log_date: prepared.log_date,
@@ -512,7 +534,7 @@ export default function Page() {
           remarks: prepared.remarks || "",
           exceedance_reason: prepared.exceedance_reason || "",
           approved_by: prepared.approved_by || "",
-          approval_time: prepared.approved_by ? prepared.approval_time || "" : "",
+          approval_time: approvalTimestamp,
           month_key: prepared.month_key,
         };
 
