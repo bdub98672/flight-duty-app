@@ -855,7 +855,7 @@ export default function Page() {
                 displayedRows.map((row) => {
                   const d = derivedByDate[row.log_date];
                   const rowLocked = isRowLocked(row);
-                  const dutyOver14 = (d?.dutyMinutes || 0) > 14 * 60;
+                  const dutyOver14 = d?.dutyMinutes != null && d.dutyMinutes > 14 * 60;
                   const dutyInOff = isOff(row.duty_in);
 
                   return (
@@ -909,14 +909,14 @@ export default function Page() {
 
                       <td
                         className={`border px-2 py-2 font-semibold ${
-                          d?.dutyMinutes === null
-                            ? ""
-                            : dutyOver14
-                              ? "bg-red-100 text-red-700"
-                              : "bg-green-100 text-green-700"
+                          d?.dutyMinutes != null
+                            ? d.dutyMinutes > 14 * 60
+                              ? "bg-red-300 text-red-900"
+                              : "bg-green-200 text-green-900"
+                            : ""
                         }`}
                       >
-                        {d?.dutyMinutes === null ? "" : minutesToHoursString(d.dutyMinutes)}
+                        {d?.dutyMinutes != null ? minutesToHoursString(d.dutyMinutes) : ""}
                       </td>
 
                       <td
