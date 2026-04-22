@@ -598,7 +598,7 @@ export default function Page() {
           .update(payload)
           .eq("id", existing.id);
 
-        if (error) throw error;
+          if (error) throw error;
       } else {
         const { error } = await supabase.from("month_signoffs").insert(payload);
         if (error) throw error;
@@ -672,7 +672,10 @@ export default function Page() {
     selectedMonth === "ALL" ? false : isMonthLocked(selectedMonthKey);
 
   return (
-    <main className="min-h-screen bg-slate-100 px-6 py-4 md:px-10 md:py-6 lg:px-14">
+    <main
+      className="min-h-screen bg-slate-100 py-4 md:py-6"
+      style={{ paddingLeft: "0.5in", paddingRight: "0.35in" }}
+    >
       <div className="max-w-[1700px] space-y-4">
         <div className="rounded-2xl bg-white p-5 shadow">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
@@ -858,6 +861,13 @@ export default function Page() {
                   const dutyOver14 = d?.dutyMinutes != null && d.dutyMinutes > 14 * 60;
                   const dutyInOff = isOff(row.duty_in);
 
+                  const dutyCellStyle =
+                    d?.dutyMinutes != null
+                      ? dutyOver14
+                        ? { backgroundColor: "#fca5a5", color: "#7f1d1d" }
+                        : { backgroundColor: "#bbf7d0", color: "#14532d" }
+                      : undefined;
+
                   return (
                     <tr key={row.log_date} className="odd:bg-white even:bg-slate-50">
                       <td className="border px-2 py-2 whitespace-nowrap font-medium">
@@ -907,15 +917,7 @@ export default function Page() {
                         />
                       </td>
 
-                      <td
-                        className={`border px-2 py-2 font-semibold ${
-                          d?.dutyMinutes != null
-                            ? d.dutyMinutes > 14 * 60
-                              ? "bg-red-300 text-red-900"
-                              : "bg-green-200 text-green-900"
-                            : ""
-                        }`}
-                      >
+                      <td className="border px-2 py-2 font-semibold" style={dutyCellStyle}>
                         {d?.dutyMinutes != null ? minutesToHoursString(d.dutyMinutes) : ""}
                       </td>
 
