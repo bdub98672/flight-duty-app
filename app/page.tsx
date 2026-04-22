@@ -221,9 +221,13 @@ function applyRules(row: DutyRow): DutyRow {
   }
 
   const dutyMinutes = calcDutyMinutes(next.duty_in, next.duty_out);
-  if (dutyMinutes === null || dutyMinutes <= 14 * 60) {
+  const isOver14 = dutyMinutes !== null && dutyMinutes > 14 * 60;
+
+  if (!isOver14) {
     next.exceedance_reason = "";
     next.approved_by = "";
+    next.approval_time = "";
+  } else if (!next.approved_by.trim()) {
     next.approval_time = "";
   }
 
@@ -278,30 +282,32 @@ export default function Page() {
       setMessage(`Signoff load error: ${signoffError.message}`);
     }
 
-    const mapped = (dbRows || []).map((r: any) => ({
-      id: r.id ?? null,
-      pilot_name: r.pilot_name ?? pilot,
-      log_date: r.log_date,
-      duty_in: r.duty_in ?? "OFF",
-      duty_out: r.duty_out ?? "",
-      flight_hours:
-        r.flight_hours === null || r.flight_hours === undefined ? "" : String(r.flight_hours),
-      day_landings: Number(r.day_landings ?? 0),
-      night_landings: Number(r.night_landings ?? 0),
-      remarks: r.remarks ?? "",
-      exceedance_reason: r.exceedance_reason ?? "",
-      approved_by: r.approved_by ?? "",
-      approval_time: r.approval_time ?? "",
-      month_key: r.month_key ?? r.log_date.slice(0, 7),
-    })) as DutyRow[];
+    const mapped = (dbRows || []).map((r: any) => {
+      const raw: DutyRow = {
+        id: r.id ?? null,
+        pilot_name: r.pilot_name ?? pilot,
+        log_date: r.log_date,
+        duty_in: r.duty_in ?? "OFF",
+        duty_out: r.duty_out ?? "",
+        flight_hours:
+          r.flight_hours === null || r.flight_hours === undefined ? "" : String(r.flight_hours),
+        day_landings: Number(r.day_landings ?? 0),
+        night_landings: Number(r.night_landings ?? 0),
+        remarks: r.remarks ?? "",
+        exceedance_reason: r.exceedance_reason ?? "",
+        approved_by: r.approved_by ?? "",
+        approval_time: r.approval_time ?? "",
+        month_key: r.month_key ?? r.log_date.slice(0, 7),
+      };
+
+      return applyRules(raw);
+    }) as DutyRow[];
 
     const byDate = new Map<string, DutyRow>();
-    mapped.forEach((r) => byDate.set(r.log_date, applyRules(r)));
+    mapped.forEach((r) => byDate.set(r.log_date, r));
 
     const mergedYearRows = yearRows.map((base) => byDate.get(base.log_date) ?? base);
-    const priorRows = mapped
-      .filter((r) => r.log_date < `${year}-01-01`)
-      .map(applyRules);
+    const priorRows = mapped.filter((r) => r.log_date < `${year}-01-01`);
 
     const signoffMap: Record<string, MonthSignoff> = {};
     (signoffRows || []).forEach((s: any) => {
@@ -867,9 +873,10 @@ export default function Page() {
                           disabled={rowLocked}
                           onChange={(e) =>
                             updateRow(row.log_date, {
-                              duty_in: e.target.value.toUpperCase() === "OFF"
-                                ? "OFF"
-                                : sanitizeTimeTyping(e.target.value),
+                              duty_in:
+                                e.target.value.toUpperCase() === "OFF"
+                                  ? "OFF"
+                                  : sanitizeTimeTyping(e.target.value),
                             })
                           }
                           onBlur={() =>
@@ -1038,7 +1045,7 @@ export default function Page() {
                         <input
                           type="text"
                           className="w-24 rounded border px-2 py-1 font-mono"
-                          placeholder="1430"
+                          placeholder=""
                           value={row.approval_time}
                           disabled={rowLocked || !dutyOver14}
                           onChange={(e) =>
