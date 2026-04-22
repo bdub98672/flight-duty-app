@@ -604,14 +604,16 @@ export default function Page() {
       await saveChanges();
 
       const existing = signoffs[monthKey];
-      const payload = {
-        pilot_name: selectedPilot,
-        month_key: monthKey,
-        signed_name: signedName.trim(),
-        signed_at: new Date().toISOString(),
-        locked: true,
-        certification_text: "I certify this monthly flight and duty log is accurate.",
-      };
+      const signedAtIso = new Date().toISOString();
+
+const payload = {
+  pilot_name: selectedPilot,
+  month_key: monthKey,
+  signed_name: signedName.trim(),
+  signed_at: signedAtIso,
+  locked: true,
+  certification_text: "I certify this monthly flight and duty log is accurate.",
+};
 
       if (existing?.id) {
         const { error } = await supabase
@@ -624,7 +626,23 @@ export default function Page() {
         const { error } = await supabase.from("month_signoffs").insert(payload);
         if (error) throw error;
       }
+const emailResponse = await fetch("/api/send-signoff-email", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    pilotName: selectedPilot,
+    monthKey,
+    signedName: signedName.trim(),
+    signedAt: signedAtIso,
+  }),
+});
 
+if (!emailResponse.ok) {
+  const emailJson = await emailResponse.json().catch(() => null);
+  throw new Error(emailJson?.error || "Month signed, but email notification failed.");
+}
       setMessage(`Signed and locked ${monthKey}.`);
       await loadData(selectedPilot, selectedYear);
     } catch (err: any) {
