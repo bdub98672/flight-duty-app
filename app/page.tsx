@@ -363,7 +363,6 @@ export default function Page() {
 
   const derivedByDate = useMemo(() => {
     const map: Record<string, DerivedRow> = {};
-
     const sorted = [...lookbackRows, ...rows].sort((a, b) =>
       a.log_date.localeCompare(b.log_date)
     );
@@ -598,7 +597,7 @@ export default function Page() {
           .update(payload)
           .eq("id", existing.id);
 
-          if (error) throw error;
+        if (error) throw error;
       } else {
         const { error } = await supabase.from("month_signoffs").insert(payload);
         if (error) throw error;
@@ -868,6 +867,16 @@ export default function Page() {
                         : { backgroundColor: "#bbf7d0", color: "#14532d" }
                       : undefined;
 
+                  const dayCurrencyStyle =
+                    d?.dayCurrent
+                      ? { backgroundColor: "#bbf7d0", color: "#14532d" }
+                      : { backgroundColor: "#fca5a5", color: "#7f1d1d" };
+
+                  const nightCurrencyStyle =
+                    d?.nightCurrent
+                      ? { backgroundColor: "#bbf7d0", color: "#14532d" }
+                      : { backgroundColor: "#fca5a5", color: "#7f1d1d" };
+
                   return (
                     <tr key={row.log_date} className="odd:bg-white even:bg-slate-50">
                       <td className="border px-2 py-2 whitespace-nowrap font-medium">
@@ -901,7 +910,7 @@ export default function Page() {
                         <input
                           type="text"
                           className="w-20 rounded border px-2 py-1 font-mono"
-                          placeholder="2000"
+                          placeholder=""
                           value={row.duty_out}
                           disabled={rowLocked || dutyInOff}
                           onChange={(e) =>
@@ -985,23 +994,11 @@ export default function Page() {
                         />
                       </td>
 
-                      <td
-                        className={`border px-2 py-2 font-semibold ${
-                          d?.dayCurrent
-                            ? "bg-green-100 text-green-700"
-                            : "bg-red-100 text-red-700"
-                        }`}
-                      >
+                      <td className="border px-2 py-2 font-semibold" style={dayCurrencyStyle}>
                         {d?.dayCurrent ? "CURRENT" : "NOT CURRENT"}
                       </td>
 
-                      <td
-                        className={`border px-2 py-2 font-semibold ${
-                          d?.nightCurrent
-                            ? "bg-green-100 text-green-700"
-                            : "bg-red-100 text-red-700"
-                        }`}
-                      >
+                      <td className="border px-2 py-2 font-semibold" style={nightCurrencyStyle}>
                         {d?.nightCurrent ? "CURRENT" : "NOT CURRENT"}
                       </td>
 
